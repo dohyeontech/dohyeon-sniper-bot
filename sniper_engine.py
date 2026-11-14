@@ -378,7 +378,11 @@ def run_sniper_tick(stream=None):
                     evaluated.append(m)
             qualified = [m for m in evaluated if m["qualified"]]
             solid = [m for m in evaluated if m["base_krw"] > 0 and m["base_ticks"] >= 3]
-            top = sorted(solid, key=lambda x: x["surge_ratio"], reverse=True)[:6]
+            # 표시용: 초저유동성 틱 튐(수십만 원대)이 1위로 보이지 않도록 최소 300만 원 이상만 노출
+            display_pool = [m for m in solid if m["short_krw"] >= 3_000_000]
+            if not display_pool:
+                display_pool = sorted(solid, key=lambda x: x["short_krw"], reverse=True)[:6]
+            top = sorted(display_pool, key=lambda x: x["surge_ratio"], reverse=True)[:6]
             state["live_scan"] = {
                 "scanned": len(evaluated),
                 "qualified": len(qualified),
