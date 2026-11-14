@@ -1,87 +1,191 @@
 """
-스나이퍼 봇 v3.1 — 업비트 실시간 WebSocket 체결 스트림 기반 초단타 엔진 · 대금별 3계좌 병렬.
+스나이퍼 봇 v4.0 — 「10대 단타 전략 실시간 비교 리그」.
 
-v3.0(단일 계좌)을 확장했다. 웹소켓 연결과 BTC 추세 체크는 1개만 공유하고,
-1.5초 판단 루프에서 **15초 거래대금 문턱이 다른 3개의 독립 가상 계좌**를 동시에 운용한다.
+업비트 실시간 WebSocket 체결 스트림 **1개** 위에서, 잔고·포지션·전적·쿨다운·매매내역이
+완전히 분리된 **10개의 독립 가상 계좌(각 시드 2,000,000원)** 를 동시에 운용한다.
+같은 시장 스냅샷을 모든 전략이 공유하므로 "같은 순간에 어떤 규칙이 돈을 버는가"를
+조건이 동일한 상태에서 비교할 수 있다.
 
-  · 30m — 3,000만원↑ (보수형 / 대형 슈팅)
-  · 10m — 1,000만원↑ (균형형 / 중형 슈팅)
-  · 3m  —   300만원↑ (공격형 / 초민감 스캘핑)
+  기존 승계 (v3.1 3계좌, 잔고·전적·포지션 그대로 이관)
+    1. 3m               — 300만↑ 급등 추격
+    2. 10m              — 1,000만↑ 급등 추격
+    3. 30m              — 3,000만↑ 급등 추격
+  신규 7전략 (각 200만 원 신규 시드)
+    4. panic_bounce     — 투매 과매도 반등
+    5. pullback_reentry — 눌림목 재진입
+    6. vwap_breakout    — 실시간 VWAP 돌파
+    7. streak_ignition  — 연속 매수 긁기
+    8. major_momentum   — 대형주 TOP10 스캘핑
+    9. rsi_oversold     — 1분봉 RSI 과매도 반등
+   10. bb_squeeze       — 1분봉 볼린저 스퀴즈 돌파
 
-각 계좌는 독립 cash_krw / position / wins / losses / total_realized_pnl /
-cooldown_until / recent_trades 를 가지며, 한 계좌의 체결·손절 쿨다운이 다른 계좌에 영향을 주지 않는다.
+공통 리스크 규칙: BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 **전 전략 신규 진입 차단**
+(보유 포지션은 유지). 손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
 
-진입 (모든 계좌 공통, 금액 문턱만 다름):
-  1) BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 진입 차단
-  2) 최근 15초 거래대금 >= 직전 3분 평균 15초 거래대금 x 4.0
-  3) 최근 15초 거래대금 >= 계좌별 문턱 (3,000만 / 1,000만 / 300만)
-  4) 최근 15초 매수 체결(BID) 금액 비율 >= 70%
-  5) 3분 전 가격 대비 현재가 +0.3% ~ +3.0% (초입 구간만)
-
-청산 (1.5초 단위 틱 감시, 계좌별 독립):
-  목표 +2.5% / 트레일링(+1.5% 도달 후 고점 대비 -0.4% 반락) / 손절 -1.8%(5분 쿨다운) / 20분 시간 초과
+청산은 1.5초 판단 루프에서 틱 가격으로 감시한다. 목표 익절은 목표가 체결(초과분 미반영,
+보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
 """
 
 import json
 import os
 import sys
 import time
-import urllib.request
 from datetime import datetime, timezone, timedelta
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from persistence import load_state, save_state, sync_status  # noqa: E402
+from persistence import load_state, save_state, last_load_source, gist_enabled  # noqa: E402
 from scanner import check_btc_trend, fetch_tickers  # noqa: E402
 
-VERSION = "3.1"
-FEE_RATE = 0.0005          # 업비트 수수료 0.05%
-TICK_INTERVAL_SEC = 1.5    # 엔진 판단 주기
+VERSION = "4.0"
+FEE_RATE = 0.0005           # 업비트 수수료 0.05%
+TICK_INTERVAL_SEC = 1.5     # 엔진 판단 주기
+DEFAULT_SEED = 2_000_000    # 전략별 모의 시드
 KST = timezone(timedelta(hours=9))
 
-# 대금별 3계좌 정의 — 15초 거래대금 문턱만 다르고 나머지 규칙은 동일
-TIER_KEYS = ["30m", "10m", "3m"]
-TIERS = {
-    "30m": {"key": "30m", "label": "3,000만↑", "style": "보수형 · 대형 슈팅", "min_short_krw": 30_000_000},
-    "10m": {"key": "10m", "label": "1,000만↑", "style": "균형형 · 중형 슈팅", "min_short_krw": 10_000_000},
-    "3m":  {"key": "3m",  "label": "300만↑",  "style": "공격형 · 초민감 스캘핑", "min_short_krw": 3_000_000},
-}
-DEFAULT_TIER_CAPITAL = 2_000_000
+LEGACY_KEYS = ("3m", "10m", "30m")
+NEW_KEYS = ("panic_bounce", "pullback_reentry", "vwap_breakout", "streak_ignition",
+            "major_momentum", "rsi_oversold", "bb_squeeze")
+STRATEGY_KEYS = LEGACY_KEYS + NEW_KEYS
 
-DEFAULT_RULES_V3 = {
-    "engine": "Upbit WebSocket trade stream (tick-level) · 3계좌 병렬",
-    "tick_interval_sec": TICK_INTERVAL_SEC,
-    "short_window_sec": 15,               # 폭발 판정 창
-    "base_window_sec": 180,               # 3분 평균 기준 창
-    "min_surge_ratio": 4.0,               # 직전 3분 평균 15초 거래대금 대비 4.0배
-    "min_short_krw": 30_000_000,          # 보수형 계좌 문턱 (하위 호환용 대표값)
-    "tier_min_short_krw": {"30m": 30_000_000, "10m": 10_000_000, "3m": 3_000_000},
-    "min_bid_ratio": 0.70,                # 매수 체결(BID) 비율 70% 이상
-    "min_chg_pct": 0.3,                   # 3분 전 대비 +0.3% 이상
-    "max_chg_pct": 3.0,                   # 3분 전 대비 +3.0% 이하 (뒷북 추격 차단)
-    "min_coverage_sec": 60,               # 틱 윈도우 최소 관측 시간
-    "min_base_ticks": 3,                 # 직전 3분 평균 산출용 최소 체결 표본 수
-    "target_profit_pct": 2.5,
-    "trailing_activation_pct": 1.5,
-    "trailing_drop_pct": 0.4,
-    "stop_loss_pct": -1.8,
-    "max_hold_minutes": 20,
-    "loss_cooldown_minutes": 5,
-    "btc_filter_enabled": True,
-    "btc_sma_diff_threshold_pct": -0.2,
-    "gist_sync_interval_sec": 60,
-    "entry_size": "계좌별 가용 현금 100%",
-    "tiers": [
-        {"key": "30m", "label": "3,000만↑", "style": "보수형", "min_short_krw": 30_000_000},
-        {"key": "10m", "label": "1,000만↑", "style": "균형형", "min_short_krw": 10_000_000},
-        {"key": "3m", "label": "300만↑", "style": "공격형", "min_short_krw": 3_000_000},
-    ],
+# ---------------------------------------------------------------- 전략 정의
+STRATEGIES = {
+    # ---- v3.1에서 승계되는 3계좌 (규칙 동일, 15초 거래대금 문턱만 다름) ----
+    "3m": {
+        "key": "3m", "label": "300만↑", "name": "300만↑ 급등 추격",
+        "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True,
+        "entry": "15초 거래대금 300만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
+        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
+        "params": {"min_short_krw": 3_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
+                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
+                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
+                   "max_hold_min": 20, "cooldown_min": 5},
+    },
+    "10m": {
+        "key": "10m", "label": "1,000만↑", "name": "1,000만↑ 급등 추격",
+        "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True,
+        "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
+        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
+        "params": {"min_short_krw": 10_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
+                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
+                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
+                   "max_hold_min": 20, "cooldown_min": 5},
+    },
+    "30m": {
+        "key": "30m", "label": "3,000만↑", "name": "3,000만↑ 급등 추격",
+        "style": "보수형 · 대형 슈팅", "kind": "surge", "legacy": True,
+        "entry": "15초 거래대금 3,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
+        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
+        "params": {"min_short_krw": 30_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
+                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
+                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
+                   "max_hold_min": 20, "cooldown_min": 5},
+    },
+    # ---- 신규 7전략 ----
+    "panic_bounce": {
+        "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
+        "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False,
+        "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
+        "exit": "목표 +2.0% · 손절 -1.5% · 최대 15분 · 쿨다운 5분",
+        "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 2.0,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
+                   "max_hold_min": 15, "cooldown_min": 5},
+    },
+    "pullback_reentry": {
+        "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
+        "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False,
+        "entry": "3~10분 고점 대비 -1.0~-2.2% 눌림 구간에서 15초 BID 65%↑ + 가격 상승 전환",
+        "exit": "목표 +2.2% · 손절 -1.6% · 최대 25분 · 쿨다운 5분",
+        "params": {"dd_min_pct": -2.2, "dd_max_pct": -1.0, "min_bid_ratio": 0.65,
+                   "min_coverage_10m_sec": 180, "target_pct": 2.2,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.6,
+                   "max_hold_min": 25, "cooldown_min": 5},
+    },
+    "vwap_breakout": {
+        "key": "vwap_breakout", "label": "VWAP 돌파", "name": "실시간 VWAP 돌파",
+        "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False,
+        "entry": "직전 3분 VWAP 하단에서 15초 거래대금 2.5배↑ + BID 65%↑ 동반, VWAP +0.3%↑ 상향 돌파",
+        "exit": "목표 +2.0% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
+        "params": {"min_vol_ratio": 2.5, "min_bid_ratio": 0.65, "breakout_pct": 0.3,
+                   "min_coverage_sec": 120, "target_pct": 2.0,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
+                   "max_hold_min": 25, "cooldown_min": 5},
+    },
+    "streak_ignition": {
+        "key": "streak_ignition", "label": "매수 긁기", "name": "연속 매수 긁기",
+        "style": "모멘텀 · 순간 초동", "kind": "streak", "legacy": False,
+        "entry": "최근 10초 BID 비중 85%↑ + 체결 15건↑ + 15초 거래대금 500만↑",
+        "exit": "목표 +1.8% · 손절 -1.2% · 최대 10분 · 쿨다운 3분",
+        "params": {"min_ticks_10s": 15, "min_bid_10s": 0.85, "min_short_krw": 5_000_000,
+                   "min_coverage_sec": 20, "target_pct": 1.8,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.2,
+                   "max_hold_min": 10, "cooldown_min": 3},
+    },
+    "major_momentum": {
+        "key": "major_momentum", "label": "대형주 스캘핑", "name": "대형주 TOP10 스캘핑",
+        "style": "모멘텀 · 유동성 상위", "kind": "major", "legacy": False,
+        "entry": "24h 거래대금 TOP10만 · 15초 거래대금 3.0배↑ + BID 65%↑ + 3분변동 +0.2~+2.0%",
+        "exit": "목표 +1.5% · 트레일링 +1.0%→고점 -0.3% · 손절 -1.2% · 최대 30분 · 쿨다운 5분",
+        "params": {"top_n": 10, "min_surge_ratio": 3.0, "min_bid_ratio": 0.65,
+                   "min_chg_pct": 0.2, "max_chg_pct": 2.0, "target_pct": 1.5,
+                   "trail_activation_pct": 1.0, "trail_drop_pct": 0.3, "stop_pct": -1.2,
+                   "max_hold_min": 30, "cooldown_min": 5},
+    },
+    "rsi_oversold": {
+        "key": "rsi_oversold", "label": "RSI 과매도", "name": "1분봉 RSI 과매도 반등",
+        "style": "역추세 · 지표 반전", "kind": "rsi", "legacy": False,
+        "entry": "1분봉 RSI(14) 25 이하 과매도에서 RSI 상향 반전 + 15초 BID 60%↑",
+        "exit": "목표 +1.8% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
+        "params": {"rsi_period": 14, "rsi_threshold": 25.0, "min_bid_ratio": 0.60,
+                   "max_candle_age_sec": 180, "target_pct": 1.8,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
+                   "max_hold_min": 25, "cooldown_min": 5},
+    },
+    "bb_squeeze": {
+        "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
+        "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False,
+        "entry": "1분봉 볼린저밴드(20,2) 수축(최근 40봉 밴드폭 하위 25%) 후 상단 밴드 거래량 2.0배↑ 돌파",
+        "exit": "목표 +2.4% · 손절 -1.6% · 최대 30분 · 쿨다운 5분",
+        "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.25, "min_vol_ratio": 2.0,
+                   "max_candle_age_sec": 180, "target_pct": 2.4,
+                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.6,
+                   "max_hold_min": 30, "cooldown_min": 5},
+    },
 }
+
+
+def _rules_block():
+    """대시보드·Gist에 저장하는 규칙 요약 (정적)."""
+    return {
+        "engine": "Upbit WebSocket trade stream (tick-level) · 10전략 병렬 리그",
+        "tick_interval_sec": TICK_INTERVAL_SEC,
+        "seed_per_strategy": DEFAULT_SEED,
+        "short_window_sec": 15,
+        "base_window_sec": 180,
+        "btc_filter": {"enabled": True, "sma_window": "15분봉 20이평", "threshold_pct": -0.2,
+                       "note": "BTC가 20이평 대비 -0.2% 초과 하회하면 전 전략 신규 진입 차단(보유 유지)"},
+        "candle_cache": {"top_n": 15, "refresh_sec": 60, "sleep_sec": 0.25,
+                         "note": "RSI·볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 순환 수집"},
+        "gist_sync_interval_sec": 60,
+        "fee_rate": FEE_RATE,
+        "strategies": {
+            k: {"key": k, "label": STRATEGIES[k]["label"], "name": STRATEGIES[k]["name"],
+                "style": STRATEGIES[k]["style"], "entry": STRATEGIES[k]["entry"],
+                "exit": STRATEGIES[k]["exit"], "params": dict(STRATEGIES[k]["params"]),
+                "carried_over": STRATEGIES[k]["legacy"]}
+            for k in STRATEGY_KEYS
+        },
+    }
+
+
+RULES_V4 = _rules_block()
 
 _btc_cache = {"ts": 0.0, "data": None}
 _rest_price_cache = {}
+_candle_cache = None          # main.py가 set_candle_cache()로 주입
+_ensure_guard = {"ts": 0.0, "last_note": None}
 
 
 def kst_now():
@@ -94,6 +198,15 @@ def fmt(dt):
 
 def _now_ms():
     return int(time.time() * 1000)
+
+
+def set_candle_cache(cache):
+    global _candle_cache
+    _candle_cache = cache
+
+
+def get_candle_cache():
+    return _candle_cache
 
 
 def _btc_trend_cached(ttl=30.0):
@@ -127,17 +240,23 @@ def _rest_price(market, ttl=2.0):
     return hit[0] if hit else None
 
 
-def new_tier(key, initial_capital=DEFAULT_TIER_CAPITAL, now_str=None):
-    meta = TIERS[key]
+# ---------------------------------------------------------------- 상태 구조
+def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
+    meta = STRATEGIES[key]
     now_str = now_str or fmt(kst_now())
     return {
         "key": key,
         "label": meta["label"],
+        "name": meta["name"],
         "style": meta["style"],
-        "min_short_krw": meta["min_short_krw"],
+        "kind": meta["kind"],
+        "carried_over": meta["legacy"],
+        "entry": meta["entry"],
+        "exit": meta["exit"],
+        "params": dict(meta["params"]),
         "initialized_at": now_str,
-        "initial_capital": initial_capital,
-        "cash_krw": float(initial_capital),
+        "initial_capital": float(seed),
+        "cash_krw": float(seed),
         "position": None,
         "cooldown_until": None,
         "total_realized_pnl": 0.0,
@@ -145,28 +264,28 @@ def new_tier(key, initial_capital=DEFAULT_TIER_CAPITAL, now_str=None):
         "wins": 0,
         "losses": 0,
         "recent_trades": [],
-        "status": "WAITING_FOR_SURGE",
-        "last_event": f"{meta['label']} 계좌 초기화 — 웹소켓 틱 스트림 대기",
+        "status": "WAITING_FOR_SIGNAL",
+        "last_event": f"{meta['name']} 계좌 초기화 — 신호 대기",
         "watch": None,
-        "current_equity": initial_capital,
+        "current_equity": float(seed),
         "current_ret_pct": 0.0,
-        "peak_equity": float(initial_capital),
+        "peak_equity": float(seed),
         "max_drawdown_pct": 0.0,
     }
 
 
-def new_multi_state(tier_capital=DEFAULT_TIER_CAPITAL):
+def new_league_state(seed=DEFAULT_SEED):
     now_str = fmt(kst_now())
-    tiers = {k: new_tier(k, tier_capital, now_str) for k in TIER_KEYS}
-    total_capital = tier_capital * len(TIER_KEYS)
-    return {
+    strategies = {k: new_strategy(k, seed, now_str) for k in STRATEGY_KEYS}
+    total = float(seed) * len(STRATEGY_KEYS)
+    state = {
         "version": VERSION,
-        "status": "WAITING_FOR_SURGE",
-        "engine": "ws_tick_v3_multi",
-        "mode": "multi_tier",
+        "status": "WAITING_FOR_SIGNAL",
+        "engine": "ws_tick_v4_league",
+        "mode": "ten_strategy_league",
         "initialized_at": now_str,
-        "initial_capital": total_capital,
-        "cash_krw": float(total_capital),
+        "initial_capital": total,
+        "cash_krw": total,
         "position": None,
         "cooldown_until": None,
         "btc_trend": None,
@@ -176,12 +295,14 @@ def new_multi_state(tier_capital=DEFAULT_TIER_CAPITAL):
         "losses": 0,
         "recent_trades": [],
         "last_checked_time": now_str,
-        "last_event": "v3.1 3계좌 병렬 엔진 초기화 — 웹소켓 틱 스트림 대기",
-        "rules": DEFAULT_RULES_V3,
-        "tiers": tiers,
-        "current_equity": total_capital,
+        "last_event": "v4.0 10전략 리그 초기화 — 웹소켓 틱 스트림 대기",
+        "rules": RULES_V4,
+        "strategies": strategies,
+        "strategy_order": list(STRATEGY_KEYS),
+        "leaderboard": [],
+        "current_equity": total,
         "current_ret_pct": 0.0,
-        "peak_equity": float(total_capital),
+        "peak_equity": total,
         "max_drawdown_pct": 0.0,
         "live_scan": {"scanned": 0, "qualified": 0, "top": []},
         "exit_rules_note": {
@@ -189,69 +310,123 @@ def new_multi_state(tier_capital=DEFAULT_TIER_CAPITAL):
             "stop": "손절/트레일링/시간초과는 관측 틱 가격으로 체결 (슬리피지 반영)",
         },
     }
-
-
-def migrate_single_state(old, tier_capital=DEFAULT_TIER_CAPITAL):
-    """v3.0 단일 계좌 상태를 3계좌 구조로 승계한다.
-
-    기존 계좌의 잔고·포지션·전적은 3,000만↑(보수형) 슬롯에 그대로 넘기고,
-    1,000만↑ / 300만↑ 슬롯은 신규 시드로 시작한다.
-    """
-    state = new_multi_state(tier_capital)
-    if not isinstance(old, dict) or old.get("version") != "3.0":
-        return state
-
-    heir = state["tiers"]["30m"]
-    for field in ("initialized_at", "cash_krw", "position", "cooldown_until",
-                  "total_realized_pnl", "total_trades", "wins", "losses",
-                  "recent_trades", "peak_equity", "max_drawdown_pct"):
-        if field in old:
-            heir[field] = old[field]
-    if old.get("initial_capital"):
-        heir["initial_capital"] = old["initial_capital"]
-    if heir["position"]:
-        heir["status"] = "IN_POSITION"
-        heir["last_event"] = "v3.0 단일 계좌에서 보유 포지션 승계"
-    elif heir["total_trades"]:
-        heir["last_event"] = f"v3.0 단일 계좌 {heir['total_trades']}전 승계"
-    else:
-        heir["last_event"] = "3,000만↑ 계좌 — v3.0 기록 승계 (0전 0승 0패)"
-    state["migrated_from"] = {"version": "3.0", "at": fmt(kst_now()),
-                              "trades": old.get("total_trades", 0),
-                              "had_position": bool(old.get("position"))}
-    print(f"[Engine] Migrated v3.0 single account -> 30m slot "
-          f"(trades={old.get('total_trades', 0)}, position={bool(old.get('position'))})")
+    _alias_legacy(state)
     return state
 
 
-def ensure_v3_state():
-    """Gist/로컬 상태를 v3.1 3계좌 구조로 맞춘다.
+def _alias_legacy(state):
+    """v3.x 소비자 호환: state['tiers']는 승계 3계좌를 같은 객체로 가리킨다."""
+    strat = state.get("strategies") or {}
+    state["tiers"] = {k: strat[k] for k in LEGACY_KEYS if k in strat}
+    return state
 
-    - 이미 v3.1이면 규칙 정의만 최신화
-    - v3.0이면 3,000만↑ 슬롯으로 승계 (포지션·전적 보존)
-    - 그 외/손상 상태면 3계좌 × 200만 원 신규 시드
+
+CARRY_FIELDS = ("initialized_at", "initial_capital", "cash_krw", "position", "cooldown_until",
+                "total_realized_pnl", "total_trades", "wins", "losses", "recent_trades",
+                "status", "last_event", "watch", "current_equity", "current_ret_pct",
+                "peak_equity", "max_drawdown_pct")
+
+
+def migrate_from_v3(old):
+    """v3.0/v3.1 상태를 v4.0 리그로 승계한다.
+
+    기존 3계좌(3m/10m/30m)의 잔고·전적·보유 포지션·쿨다운·매매내역을 **손대지 않고**
+    같은 키의 전략 슬롯으로 그대로 옮기고, 신규 7전략만 200만 원 신규 시드로 채운다.
+    """
+    state = new_league_state()
+    old_tiers = (old or {}).get("tiers") or {}
+    carried = []
+    for key in LEGACY_KEYS:
+        src = old_tiers.get(key)
+        if not isinstance(src, dict):
+            continue
+        dst = state["strategies"][key]
+        for field in CARRY_FIELDS:
+            if field in src and src[field] is not None:
+                dst[field] = src[field]
+        if src.get("initial_capital"):
+            dst["initial_capital"] = float(src["initial_capital"])
+        dst["carried_over"] = True
+        dst["carried_from_version"] = (old or {}).get("version")
+        # 승계된 매매내역에도 전략 라벨을 붙여 대시보드 필터가 끊기지 않게 한다
+        for trade in dst.get("recent_trades") or []:
+            if isinstance(trade, dict):
+                trade.setdefault("strategy", key)
+                trade.setdefault("strategy_label", dst["label"])
+                trade.setdefault("strategy_name", dst["name"])
+                if key in LEGACY_KEYS:
+                    trade.setdefault("tier", key)
+        if dst.get("position"):
+            dst["status"] = "IN_POSITION"
+            dst["last_event"] = f"v{(old or {}).get('version', '3.x')} 보유 포지션 그대로 승계"
+        elif dst.get("total_trades"):
+            dst["last_event"] = (f"v{(old or {}).get('version', '3.x')} 전적 {dst['total_trades']}전 "
+                                 f"{dst.get('wins', 0)}승 {dst.get('losses', 0)}패 승계")
+        else:
+            dst["last_event"] = f"{dst['name']} — v{(old or {}).get('version', '3.x')} 기록 승계 (0전)"
+        carried.append(key)
+
+    state["migrated_from"] = {
+        "version": (old or {}).get("version"),
+        "at": fmt(kst_now()),
+        "carried_keys": carried,
+        "trades": sum(int(state["strategies"][k].get("total_trades") or 0) for k in carried),
+        "equity": sum(float(state["strategies"][k].get("cash_krw") or 0) for k in carried),
+        "had_position": any(bool(state["strategies"][k].get("position")) for k in carried),
+        "note": "기존 3계좌는 잔고·전적·포지션 그대로 승계, 신규 7전략은 200만 원 신규 시드",
+    }
+    print(f"[Engine] Migrated v{(old or {}).get('version')} -> v{VERSION}: "
+          f"carried {carried} (trades={state['migrated_from']['trades']}, "
+          f"positions={state['migrated_from']['had_position']})")
+    return state
+
+
+def ensure_v4_state():
+    """Gist/로컬 상태를 v4.0 10전략 리그로 맞춘다.
+
+    - 이미 v4.0이면 누락 전략만 채우고 규칙 정의를 최신화
+    - v3.x (3계좌)면 3계좌를 그대로 승계하고 신규 7전략 추가
+    - 그 외/손상 상태면 10전략 × 200만 원 신규 시드
+    - Gist가 설정돼 있는데 원격 로드에 실패한 경우에는 **절대 마이그레이션/원격 저장을 하지 않는다**
+      (낡은 로컬 state.json으로 라이브 전적을 덮어쓰는 사고 방지). 엔진이 5초 간격으로 재시도한다.
     """
     state = load_state(force_remote=True)
-    version = state.get("version")
-    if version == VERSION and isinstance(state.get("tiers"), dict):
-        missing = [k for k in TIER_KEYS if k not in state["tiers"]]
-        if missing:
-            for k in missing:
-                state["tiers"][k] = new_tier(k)
-            save_state(state, remote=True, force_remote=True)
-        if state.get("rules") != DEFAULT_RULES_V3:
-            state["rules"] = DEFAULT_RULES_V3
-            save_state(state, remote=False)
+    if gist_enabled() and last_load_source() != "gist":
+        note = f"Gist 로드 실패(소스={last_load_source()}) — 승계 대기, 원격 저장 보류"
+        if _ensure_guard["last_note"] != note:
+            _ensure_guard["last_note"] = note
+            print(f"[Engine] {note}")
         return state
 
-    if version == "3.0":
-        state = migrate_single_state(state)
+    version = state.get("version")
+    if version == VERSION and isinstance(state.get("strategies"), dict):
+        missing = [k for k in STRATEGY_KEYS if k not in state["strategies"]]
+        for k in missing:
+            state["strategies"][k] = new_strategy(k)
+        if missing:
+            print(f"[Engine] Added missing strategies: {missing}")
+        if state.get("rules") != RULES_V4:
+            state["rules"] = RULES_V4
+        for k in STRATEGY_KEYS:     # 규칙 텍스트/파라미터는 코드 정의를 따른다
+            state["strategies"][k]["entry"] = STRATEGIES[k]["entry"]
+            state["strategies"][k]["exit"] = STRATEGIES[k]["exit"]
+            state["strategies"][k].setdefault("params", dict(STRATEGIES[k]["params"]))
+        state["strategy_order"] = list(STRATEGY_KEYS)
+        _alias_legacy(state)
+        _aggregate(state, None)
+        if missing:
+            save_state(state, remote=True, force_remote=True)
+        return state
+
+    if isinstance(state.get("tiers"), dict) and str(version or "").startswith("3"):
+        new = migrate_from_v3(state)
     else:
-        print(f"[Engine] State reset from v{version} -> v{VERSION} (3 accounts x "
-              f"{DEFAULT_TIER_CAPITAL:,} KRW)")
-        state = new_multi_state()
-    save_state(state, remote=True, force_remote=True)
-    return state
+        print(f"[Engine] State reset from v{version} -> v{VERSION} "
+              f"({len(STRATEGY_KEYS)} strategies x {DEFAULT_SEED:,} KRW)")
+        new = new_league_state()
+    _aggregate(new, None)
+    save_state(new, remote=True, force_remote=True)
+    return new
 
 
 # ---------------------------------------------------------------- 지표 계산
@@ -262,59 +437,62 @@ def _position_price(pos, stream):
     return price
 
 
-def _tier_equity(tier, stream):
-    cash = float(tier.get("cash_krw") or 0.0)
-    pos = tier.get("position")
+def _strategy_equity(st, stream):
+    cash = float(st.get("cash_krw") or 0.0)
+    pos = st.get("position")
     if not pos:
         return cash
     price = _position_price(pos, stream) or pos.get("entry_price", 0)
     return cash + float(pos.get("coin_qty", 0.0)) * float(price)
 
 
-def _close_position(tier, rules, exit_price, reason, now, exit_kind):
-    pos = tier["position"]
+def _close_position(st, price, reason, now, exit_kind):
+    pos = st["position"]
+    p = st.get("params") or {}
     entry_price = float(pos["entry_price"])
     qty = float(pos["coin_qty"])
-    gross = qty * exit_price
-    net = gross * (1 - FEE_RATE)
+    net = qty * price * (1 - FEE_RATE)
     pnl = net - float(pos["cost_krw"])
-    gain_pct = (exit_price - entry_price) / entry_price * 100.0
+    gain_pct = (price - entry_price) / entry_price * 100.0
 
-    tier["cash_krw"] = net
-    tier["total_realized_pnl"] = float(tier.get("total_realized_pnl", 0.0)) + pnl
-    tier["total_trades"] = int(tier.get("total_trades", 0)) + 1
+    st["cash_krw"] = net
+    st["total_realized_pnl"] = float(st.get("total_realized_pnl", 0.0)) + pnl
+    st["total_trades"] = int(st.get("total_trades", 0)) + 1
     if pnl > 0:
-        tier["wins"] = int(tier.get("wins", 0)) + 1
+        st["wins"] = int(st.get("wins", 0)) + 1
     else:
-        tier["losses"] = int(tier.get("losses", 0)) + 1
+        st["losses"] = int(st.get("losses", 0)) + 1
         if exit_kind == "STOP_LOSS":
-            mins = rules.get("loss_cooldown_minutes", 5)
-            tier["cooldown_until"] = fmt(now + timedelta(minutes=mins))
+            mins = p.get("cooldown_min", 5)
+            st["cooldown_until"] = fmt(now + timedelta(minutes=mins))
 
-    tier["recent_trades"].append({
+    st["recent_trades"].append({
         "type": "SELL",
-        "tier": tier["key"],
-        "tier_label": tier["label"],
+        "strategy": st["key"],
+        "strategy_label": st["label"],
+        "strategy_name": st["name"],
+        "tier": st["key"] if st["key"] in LEGACY_KEYS else None,
         "market": pos["market"],
         "name": pos.get("name", pos["market"]),
         "entry_time": pos.get("entry_time"),
         "exit_time": fmt(now),
         "entry_price": entry_price,
-        "exit_price": round(exit_price, 8),
+        "exit_price": round(price, 8),
         "gain_pct": round(gain_pct, 2),
         "pnl_krw": round(pnl),
         "hold_min": round((_now_ms() - int(pos.get("entry_ts_ms") or _now_ms())) / 60000.0, 1),
         "reason": reason,
         "exit_kind": exit_kind,
     })
-    tier["position"] = None
-    tier["status"] = "WAITING_FOR_SURGE"
+    st["position"] = None
+    st["status"] = "WAITING_FOR_SIGNAL"
     return pnl, gain_pct
 
 
-def _check_exit(tier, rules, stream, now):
+def _check_exit(st, stream, now):
     """보유 포지션 틱 단위 청산 판정. 반환: (exit_price, reason, exit_kind) 또는 None"""
-    pos = tier["position"]
+    pos = st["position"]
+    p = st.get("params") or {}
     price = _position_price(pos, stream)
     if not price:
         return None
@@ -327,92 +505,243 @@ def _check_exit(tier, rules, stream, now):
     pos["last_price"] = price
     pos["unrealized_pct"] = round(gain, 2)
     high_gain = (high - entry) / entry * 100.0
-    entry_ts = int(pos.get("entry_ts_ms") or _now_ms())
-    held_min = (_now_ms() - entry_ts) / 60000.0
+    held_min = (_now_ms() - int(pos.get("entry_ts_ms") or _now_ms())) / 60000.0
 
-    stop_price = entry * (1 + rules["stop_loss_pct"] / 100.0)
-    target_price = entry * (1 + rules["target_profit_pct"] / 100.0)
+    stop_price = entry * (1 + p["stop_pct"] / 100.0)
+    target_price = entry * (1 + p["target_pct"] / 100.0)
 
     # 1) 기계적 손절 (관측 가격 체결)
     if price <= stop_price:
-        return price, f"🛑 기계적 손절 발동 ({gain:.2f}%) · {rules['loss_cooldown_minutes']}분 쿨다운", "STOP_LOSS"
+        return price, (f"🛑 기계적 손절 발동 ({gain:.2f}%) · "
+                       f"{p.get('cooldown_min', 5)}분 쿨다운"), "STOP_LOSS"
 
     # 2) 목표 익절 (목표가 체결, 보수적)
     if price >= target_price:
-        tg = (target_price - entry) / entry * 100.0
-        return target_price, f"🎯 목표 익절 달성 (+{tg:.2f}%)", "TARGET"
+        return target_price, f"🎯 목표 익절 달성 (+{p['target_pct']:.2f}%)", "TARGET"
 
-    # 3) 트레일링 스탑
-    if high_gain >= rules["trailing_activation_pct"]:
+    # 3) 트레일링 스탑 (설정된 전략만)
+    if p.get("trail_activation_pct") is not None and high_gain >= p["trail_activation_pct"]:
         drop = (price - high) / high * 100.0
-        if drop <= -rules["trailing_drop_pct"]:
-            return price, (f"🛡️ 트레일링 스탑 청산 ({gain:+.2f}%, "
-                           f"고점 {high_gain:+.2f}% 대비 {drop:.2f}%)"), "TRAILING"
+        if drop <= -p["trail_drop_pct"]:
+            return price, (f"🛡️ 트레일링 스탑 청산 ({gain:+.2f}%, 고점 {high_gain:+.2f}% "
+                           f"대비 {drop:.2f}%)"), "TRAILING"
 
     # 4) 최대 보유 시간
-    if held_min >= rules["max_hold_minutes"]:
-        return price, f"⏱️ {rules['max_hold_minutes']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
+    if held_min >= p["max_hold_min"]:
+        return price, f"⏱️ {p['max_hold_min']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
 
     return None
 
 
-def _common_reject_reasons(m, rules):
-    """계좌 공통 진입 조건 위반 사유 (금액 문턱 제외)."""
-    reasons = []
-    if m["coverage_sec"] < rules["min_coverage_sec"]:
-        reasons.append(f"관측 {m['coverage_sec']:.0f}s < {rules['min_coverage_sec']}s")
-    if m["base_krw"] <= 0 or m["base_ticks"] < rules["min_base_ticks"]:
-        reasons.append(f"기준 표본 부족({m['base_ticks']}틱)")
-    if m["surge_ratio"] < rules["min_surge_ratio"]:
-        reasons.append(f"폭발배수 {m['surge_ratio']:.1f}x < {rules['min_surge_ratio']:.1f}x")
-    if m["bid_ratio"] < rules["min_bid_ratio"]:
-        reasons.append(f"매수비율 {m['bid_ratio']*100:.0f}% < {rules['min_bid_ratio']*100:.0f}%")
-    if m["chg_3m_pct"] < rules["min_chg_pct"]:
-        reasons.append(f"3분변동 {m['chg_3m_pct']:+.2f}% < +{rules['min_chg_pct']}%")
-    if m["chg_3m_pct"] > rules["max_chg_pct"]:
-        reasons.append(f"3분변동 {m['chg_3m_pct']:+.2f}% > +{rules['max_chg_pct']}% (뒷북)")
-    return reasons
+# ---------------------------------------------------------------- 진입 신호
+def _sig_surge(snap, st, ctx):
+    """v3.1 계승: 15초 거래대금 폭발 + 매수 우위 + 초입 구간."""
+    p = st["params"]
+    if snap["coverage_sec"] < 60:
+        return False, f"관측 {snap['coverage_sec']:.0f}s < 60s", 0.0
+    if snap["base_krw"] <= 0 or snap["base_ticks"] < 3:
+        return False, f"기준 표본 부족({snap['base_ticks']}틱)", 0.0
+    if snap["short_krw"] < float(p["min_short_krw"]):
+        return False, (f"15초 거래대금 {snap['short_krw']/1e4:,.0f}만 < "
+                       f"{p['min_short_krw']/1e4:,.0f}만"), snap["surge_ratio"]
+    if snap["surge_ratio"] < p["min_surge_ratio"]:
+        return False, f"폭발배수 {snap['surge_ratio']:.1f}x < {p['min_surge_ratio']:.1f}x", snap["surge_ratio"]
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", snap["surge_ratio"]
+    if snap["chg_3m_pct"] < p["min_chg_pct"]:
+        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% < +{p['min_chg_pct']}%", snap["surge_ratio"]
+    if snap["chg_3m_pct"] > p["max_chg_pct"]:
+        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% > +{p['max_chg_pct']}% (뒷북)", snap["surge_ratio"]
+    return True, (f"15초 {snap['short_krw']/1e4:,.0f}만 · {snap['surge_ratio']:.1f}배 · "
+                  f"매수 {snap['bid_ratio']*100:.0f}% · 3분 {snap['chg_3m_pct']:+.2f}%"), \
+        snap["surge_ratio"] * 1e6 + snap["short_krw"] / 1e4
 
 
-def _tier_open_ok(m, tier, rules):
-    """해당 계좌가 이 종목에 진입할 수 있는지 (금액 문턱 포함)."""
-    if _common_reject_reasons(m, rules):
-        return False
-    return m["short_krw"] >= float(tier["min_short_krw"])
+def _sig_panic_bounce(snap, st, ctx):
+    """3분 -2.5% 급락 후 매수 우위 + 가격 반등."""
+    p = st["params"]
+    if snap["coverage_sec"] < 60:
+        return False, f"관측 {snap['coverage_sec']:.0f}s < 60s", 0.0
+    if snap["chg_3m_pct"] > p["min_drop_pct"]:
+        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% > {p['min_drop_pct']}% (급락 아님)", -snap["chg_3m_pct"]
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", 0.0
+    if snap["price_15s_ago"] is None or snap["last_price"] <= snap["price_15s_ago"]:
+        return False, "직전 15초 대비 반등 미확인", 0.0
+    reb = (snap["last_price"] - snap["price_15s_ago"]) / snap["price_15s_ago"] * 100.0
+    return True, (f"3분 {snap['chg_3m_pct']:+.2f}% 급락 후 15초 반등 {reb:+.2f}% · "
+                  f"매수 {snap['bid_ratio']*100:.0f}%"), reb
 
 
-def _tier_reject(m, tier, rules):
-    reasons = _common_reject_reasons(m, rules)
-    if m["short_krw"] < float(tier["min_short_krw"]):
-        reasons.insert(0, f"15초 거래대금 {m['short_krw']/1e4:,.0f}만 < {tier['min_short_krw']/1e4:,.0f}만")
-    return reasons
+def _sig_pullback(snap, st, ctx):
+    """3~10분 고점 대비 -1.0~-2.2% 눌림 + 매수 우위 + 상승 전환."""
+    p = st["params"]
+    if snap["coverage_10m_sec"] < p["min_coverage_10m_sec"]:
+        return False, f"10분 고점 관측 {snap['coverage_10m_sec']:.0f}s < {p['min_coverage_10m_sec']}s", 0.0
+    dd = snap.get("drawdown_from_high_pct")
+    if dd is None:
+        return False, "고점 표본 없음", 0.0
+    if dd > p["dd_max_pct"]:
+        return False, f"고점 대비 {dd:+.2f}% (눌림 부족, 기준 -1.0%↓)", -dd
+    if dd < p["dd_min_pct"]:
+        return False, f"고점 대비 {dd:+.2f}% (눌림 과다, 기준 -2.2%↑)", -dd
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", 0.0
+    if snap["price_15s_ago"] is None or snap["last_price"] <= snap["price_15s_ago"]:
+        return False, "상승 전환 미확인", 0.0
+    return True, (f"고점 대비 {dd:+.2f}% 눌림 · 매수 {snap['bid_ratio']*100:.0f}% · "
+                  f"15초 반등 확인"), snap["short_krw"] / 1e4
 
 
-def _evaluate_market(stream, market, rules, now_ms):
-    m = stream.market_metrics(market, now_ms, rules["short_window_sec"], rules["base_window_sec"])
-    if not m:
-        return None
-    common = _common_reject_reasons(m, rules)
-    m["common_ok"] = not common
-    m["common_reasons"] = common
-    tiers_ok = [k for k in TIER_KEYS if m["common_ok"] and m["short_krw"] >= float(TIERS[k]["min_short_krw"])]
-    m["qualified_tiers"] = tiers_ok
-    m["qualified"] = bool(tiers_ok)
-    m["reject"] = "진입 조건 충족" if tiers_ok else " · ".join(
-        common or [f"15초 거래대금 {m['short_krw']/1e4:,.0f}만 < 300만 (전 계좌 미달)"])
-    return m
+def _sig_vwap(snap, st, ctx):
+    """직전 3분 VWAP 하단 → 거래대금 2.5배 + 매수 우위로 VWAP +0.3% 돌파."""
+    p = st["params"]
+    if snap["coverage_sec"] < p["min_coverage_sec"]:
+        return False, f"관측 {snap['coverage_sec']:.0f}s < {p['min_coverage_sec']}s", 0.0
+    vwap = snap.get("vwap_3m")
+    if not vwap:
+        return False, "VWAP 표본 없음", 0.0
+    bo = (snap["last_price"] - vwap) / vwap * 100.0
+    if bo < p["breakout_pct"]:
+        return False, f"VWAP 대비 {bo:+.2f}% < +{p['breakout_pct']}%", bo
+    ago = snap.get("price_30s_ago")
+    if ago is None or ago > vwap:
+        return False, "직전 VWAP 하단 이력 없음 (돌파 아님)", bo
+    if snap["surge_ratio"] < p["min_vol_ratio"]:
+        return False, f"거래량 {snap['surge_ratio']:.1f}배 < {p['min_vol_ratio']:.1f}배", bo
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", bo
+    return True, (f"VWAP {vwap:,.4f} → {bo:+.2f}% 돌파 · 거래량 {snap['surge_ratio']:.1f}배 · "
+                  f"매수 {snap['bid_ratio']*100:.0f}%"), bo
 
 
-def _enter(tier, rules, stream, m, now):
-    market = m["market"]
+def _sig_streak(snap, st, ctx):
+    """10초 연속 매수 체결 + 체결 건수 + 15초 거래대금."""
+    p = st["params"]
+    if snap["coverage_sec"] < p["min_coverage_sec"]:
+        return False, f"관측 {snap['coverage_sec']:.0f}s < {p['min_coverage_sec']}s", 0.0
+    score = float(snap["ticks_10s"])
+    if snap["ticks_10s"] < p["min_ticks_10s"]:
+        return False, f"10초 체결 {snap['ticks_10s']}건 < {p['min_ticks_10s']}건", score
+    if snap["bid_ratio_10s"] < p["min_bid_10s"]:
+        return False, f"10초 매수비중 {snap['bid_ratio_10s']*100:.0f}% < {p['min_bid_10s']*100:.0f}%", score
+    if snap["short_krw"] < p["min_short_krw"]:
+        return False, (f"15초 거래대금 {snap['short_krw']/1e4:,.0f}만 < "
+                       f"{p['min_short_krw']/1e4:,.0f}만"), score
+    return True, (f"10초 {snap['ticks_10s']}건 · 매수 {snap['bid_ratio_10s']*100:.0f}% · "
+                  f"15초 {snap['short_krw']/1e4:,.0f}만"), score + snap["short_krw"] / 1e5
+
+
+def _sig_major(snap, st, ctx):
+    """24h 거래대금 TOP10 + 15초 폭발 + 매수 우위 + 3분 상승."""
+    p = st["params"]
+    if snap["market"] not in ctx["top_markets"]:
+        return False, "24h 거래대금 TOP10 아님", 0.0
+    if snap["coverage_sec"] < 60 or snap["base_ticks"] < 3:
+        return False, "기준 표본 부족", 0.0
+    if snap["surge_ratio"] < p["min_surge_ratio"]:
+        return False, f"폭발배수 {snap['surge_ratio']:.1f}x < {p['min_surge_ratio']:.1f}x", snap["surge_ratio"]
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", snap["surge_ratio"]
+    if snap["chg_3m_pct"] < p["min_chg_pct"]:
+        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% < +{p['min_chg_pct']}%", snap["surge_ratio"]
+    if snap["chg_3m_pct"] > p["max_chg_pct"]:
+        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% > +{p['max_chg_pct']}% (뒷북)", snap["surge_ratio"]
+    return True, (f"TOP10 · {snap['surge_ratio']:.1f}배 · 매수 {snap['bid_ratio']*100:.0f}% · "
+                  f"3분 {snap['chg_3m_pct']:+.2f}%"), snap["surge_ratio"] * 1e6 + snap["short_krw"] / 1e4
+
+
+def _sig_rsi(snap, st, ctx):
+    """1분봉 RSI(14) 25 이하 과매도 → 상향 반전 + 매수 우위."""
+    p = st["params"]
+    c = snap.get("candles")
+    if not c:
+        return False, "1분봉 캐시 대기 (거래대금 상위 15종목만 수집)", 0.0
+    if c.get("age_sec", 999) > p["max_candle_age_sec"]:
+        return False, f"1분봉 캐시 {c['age_sec']:.0f}s 지연", 0.0
+    rsi_now, rsi_prev = c.get("rsi"), c.get("rsi_prev")
+    if rsi_now is None or rsi_prev is None:
+        return False, "RSI 표본 부족", 0.0
+    score = p["rsi_threshold"] - rsi_prev
+    if rsi_prev > p["rsi_threshold"]:
+        return False, f"RSI {rsi_prev:.1f} > {p['rsi_threshold']:.0f} (과매도 아님)", score
+    if rsi_now <= rsi_prev:
+        return False, f"RSI 반전 미확인 ({rsi_prev:.1f}→{rsi_now:.1f})", score
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", score
+    return True, (f"RSI {rsi_prev:.1f}→{rsi_now:.1f} 반전 · 매수 {snap['bid_ratio']*100:.0f}%"), score
+
+
+def _sig_bb(snap, st, ctx):
+    """1분봉 볼린저(20,2) 수축 후 상단 밴드 거래량 2.0배 돌파."""
+    p = st["params"]
+    c = snap.get("candles")
+    if not c:
+        return False, "1분봉 캐시 대기 (거래대금 상위 15종목만 수집)", 0.0
+    if c.get("age_sec", 999) > p["max_candle_age_sec"]:
+        return False, f"1분봉 캐시 {c['age_sec']:.0f}s 지연", 0.0
+    up, rank, bw = c.get("bb_upper"), c.get("bw_rank"), c.get("bandwidth_pct")
+    if up is None or rank is None:
+        return False, "볼린저 표본 부족", 0.0
+    score = snap["surge_ratio"]
+    if rank > p["squeeze_rank"]:
+        return False, (f"밴드 수축 아님 (폭 {bw:.2f}% · 최근 40봉 백분위 {rank*100:.0f}% > "
+                       f"{p['squeeze_rank']*100:.0f}%)"), score
+    if snap["last_price"] <= up:
+        return False, f"상단 밴드 미돌파 ({snap['last_price']:,.4f} ≤ {up:,.4f})", score
+    vol_ratio = c.get("vol_ratio")
+    if snap["surge_ratio"] < p["min_vol_ratio"] and (vol_ratio or 0) < p["min_vol_ratio"]:
+        return False, f"돌파 거래량 미달 ({snap['surge_ratio']:.1f}배)", score
+    return True, (f"수축(백분위 {rank*100:.0f}%) 후 {up:,.4f} 돌파 · "
+                  f"15초 거래대금 {snap['surge_ratio']:.1f}배"), score
+
+
+SIGNAL_FNS = {
+    "surge": _sig_surge,
+    "panic_bounce": _sig_panic_bounce,
+    "pullback": _sig_pullback,
+    "vwap": _sig_vwap,
+    "streak": _sig_streak,
+    "major": _sig_major,
+    "rsi": _sig_rsi,
+    "bb": _sig_bb,
+}
+
+
+def _attach_candles(snap):
+    if _candle_cache is not None:
+        snap["candles"] = _candle_cache.snapshot(snap["market"])
+    else:
+        snap["candles"] = None
+    return snap
+
+
+def _evaluate_strategy(key, snaps, ctx):
+    """전략 하나를 전체 시장 스냅샷에 적용. (최적 진입 후보, 최적 근접 후보) 반환."""
+    st = ctx["state"]["strategies"][key]
+    fn = SIGNAL_FNS[STRATEGIES[key]["kind"]]
+    best_ok = best_any = None
+    for snap in snaps:
+        ok, why, score = fn(snap, st, ctx)
+        if ok:
+            if best_ok is None or score > best_ok[0]:
+                best_ok = (score, snap, why)
+        elif best_any is None or score > best_any[0]:
+            best_any = (score, snap, why)
+    return best_ok, best_any
+
+
+def _enter(st, snap, now, stream, why):
+    market = snap["market"]
     name = (stream.names().get(market) if stream else None) or market.replace("KRW-", "")
-    invest = float(tier["cash_krw"])
+    invest = float(st["cash_krw"])
     if invest <= 0:
         return None
-    net = invest * (1 - FEE_RATE)
-    price = float(m["last_price"])
-    qty = net / price
-    tier["position"] = {
+    price = float(snap["last_price"])
+    if price <= 0:
+        return None
+    qty = (invest * (1 - FEE_RATE)) / price
+    st["position"] = {
         "market": market,
         "name": name,
         "entry_price": price,
@@ -421,90 +750,113 @@ def _enter(tier, rules, stream, m, now):
         "cost_krw": invest,
         "entry_time": fmt(now),
         "entry_ts_ms": _now_ms(),
-        "entry_type": "WS_TICK_SURGE",
-        "tier": tier["key"],
-        "surge_ratio": round(m["surge_ratio"], 2),
-        "bid_ratio": round(m["bid_ratio"], 3),
-        "chg_3m_pct": round(m["chg_3m_pct"], 2),
-        "short_krw": round(m["short_krw"]),
+        "entry_type": f"WS_{st['kind'].upper()}",
+        "strategy": st["key"],
+        "strategy_label": st["label"],
+        "signal": why,
+        "surge_ratio": round(snap["surge_ratio"], 2),
+        "bid_ratio": round(snap["bid_ratio"], 3),
+        "chg_3m_pct": round(snap["chg_3m_pct"], 2),
+        "short_krw": round(snap["short_krw"]),
         "last_price": price,
         "unrealized_pct": 0.0,
     }
-    tier["cash_krw"] = 0.0
-    tier["status"] = "IN_POSITION"
-    tier["recent_trades"].append({
+    st["cash_krw"] = 0.0
+    st["status"] = "IN_POSITION"
+    st["recent_trades"].append({
         "type": "BUY",
-        "tier": tier["key"],
-        "tier_label": tier["label"],
+        "strategy": st["key"],
+        "strategy_label": st["label"],
+        "strategy_name": st["name"],
+        "tier": st["key"] if st["key"] in LEGACY_KEYS else None,
         "market": market,
         "name": name,
         "entry_time": fmt(now),
         "entry_price": price,
         "cost_krw": round(invest),
-        "surge_ratio": round(m["surge_ratio"], 2),
-        "bid_ratio": round(m["bid_ratio"], 3),
-        "short_krw": round(m["short_krw"]),
-        "chg_3m_pct": round(m["chg_3m_pct"], 2),
-        "reason": (f"⚡ 15초 거래대금 {m['short_krw']/1e4:,.0f}만원 · 직전3분 대비 "
-                   f"{m['surge_ratio']:.1f}배 · 매수 {m['bid_ratio']*100:.0f}% · 3분변동 {m['chg_3m_pct']:+.2f}%"),
+        "surge_ratio": round(snap["surge_ratio"], 2),
+        "bid_ratio": round(snap["bid_ratio"], 3),
+        "short_krw": round(snap["short_krw"]),
+        "chg_3m_pct": round(snap["chg_3m_pct"], 2),
+        "reason": f"⚡ {why}",
     })
     return market
 
 
-def _watch_line(tier, evaluations):
-    """대기 중인 계좌의 관찰 문구 (문턱 대비 현황)."""
-    pool = [m for m in evaluations if m["last_tick_age_sec"] < 30]
-    if not pool:
+def _watch_line(st, best_any, snap_count):
+    if not snap_count:
         return "🔍 웹소켓 틱 수신 대기", None
-    common_ok = [m for m in pool if m["common_ok"]]
-    if common_ok:
-        best = max(common_ok, key=lambda x: (x["short_krw"], x["surge_ratio"]))
-        tiers_ok = [k for k in TIER_KEYS if best["short_krw"] >= float(TIERS[k]["min_short_krw"])]
-        return (f"🔍 문턱 근접 — {best['market'].replace('KRW-', '')} "
-                f"15초 {best['short_krw']/1e4:,.0f}만 (문턱 {tier['min_short_krw']/1e4:,.0f}만) · "
-                f"{best['surge_ratio']:.1f}배 · 매수 {best['bid_ratio']*100:.0f}%", best)
-    best = max(pool, key=lambda x: x["short_krw"])
-    return (f"🔍 초입 포착 대기 (최대 {best['surge_ratio']:.1f}배 · "
-            f"15초 {best['short_krw']/1e4:,.0f}만 · 매수 {best['bid_ratio']*100:.0f}%)"), best
+    if not best_any:
+        return "🔍 신호 대기", None
+    _, snap, why = best_any
+    name = snap["market"].replace("KRW-", "")
+    return f"🔍 {name} — {why}", snap
 
 
 def _aggregate(state, stream):
-    """3계좌 합산 지표 + 상위 호환용 단일 필드 갱신."""
-    total_equity = 0.0
-    total_capital = 0.0
-    cash = 0.0
-    pnl = 0.0
+    """10전략 합산 + 수익률 리더보드."""
+    total_equity = total_capital = cash = pnl = 0.0
     trades = wins = losses = 0
     merged = []
-    in_position = 0
-    cooling = 0
-    for key in TIER_KEYS:
-        tier = state["tiers"][key]
-        equity = _tier_equity(tier, stream)
-        capital = float(tier.get("initial_capital") or DEFAULT_TIER_CAPITAL)
-        tier["current_equity"] = round(equity)
-        tier["current_ret_pct"] = round(((equity - capital) / capital) * 100, 2) if capital else 0.0
-        tier["peak_equity"] = round(max(float(tier.get("peak_equity") or capital), equity))
-        dd = ((tier["peak_equity"] - equity) / tier["peak_equity"] * 100) if tier["peak_equity"] else 0.0
-        tier["max_drawdown_pct"] = round(max(float(tier.get("max_drawdown_pct") or 0.0), dd), 2)
-        tier["initial_capital"] = capital
-        if len(tier.get("recent_trades", [])) > 40:
-            tier["recent_trades"] = tier["recent_trades"][-40:]
+    in_position = cooling = 0
+    board = []
+
+    for key in STRATEGY_KEYS:
+        st = state["strategies"][key]
+        equity = _strategy_equity(st, stream)
+        capital = float(st.get("initial_capital") or DEFAULT_SEED)
+        st["current_equity"] = round(equity)
+        st["current_ret_pct"] = round(((equity - capital) / capital) * 100, 2) if capital else 0.0
+        st["peak_equity"] = round(max(float(st.get("peak_equity") or capital), equity))
+        dd = ((st["peak_equity"] - equity) / st["peak_equity"] * 100) if st["peak_equity"] else 0.0
+        st["max_drawdown_pct"] = round(max(float(st.get("max_drawdown_pct") or 0.0), dd), 2)
+        st["initial_capital"] = capital
+        st["entry"] = STRATEGIES[key]["entry"]
+        st["exit"] = STRATEGIES[key]["exit"]
+        if len(st.get("recent_trades", [])) > 40:
+            st["recent_trades"] = st["recent_trades"][-40:]
+
         total_equity += equity
         total_capital += capital
-        cash += float(tier.get("cash_krw") or 0.0)
-        pnl += float(tier.get("total_realized_pnl") or 0.0)
-        trades += int(tier.get("total_trades") or 0)
-        wins += int(tier.get("wins") or 0)
-        losses += int(tier.get("losses") or 0)
-        if tier.get("position"):
+        cash += float(st.get("cash_krw") or 0.0)
+        pnl += float(st.get("total_realized_pnl") or 0.0)
+        trades += int(st.get("total_trades") or 0)
+        wins += int(st.get("wins") or 0)
+        losses += int(st.get("losses") or 0)
+        if st.get("position"):
             in_position += 1
-        elif tier.get("cooldown_until"):
+        elif st.get("cooldown_until"):
             cooling += 1
-        merged.extend(tier.get("recent_trades", []))
+        merged.extend(st.get("recent_trades", []))
+        tr = int(st.get("total_trades") or 0)
+        board.append({
+            "key": key,
+            "label": st["label"],
+            "name": st["name"],
+            "style": st["style"],
+            "carried_over": bool(st.get("carried_over")),
+            "equity": round(equity),
+            "ret_pct": st["current_ret_pct"],
+            "trades": tr,
+            "wins": int(st.get("wins") or 0),
+            "losses": int(st.get("losses") or 0),
+            "win_rate_pct": round((int(st.get("wins") or 0) / tr) * 100, 1) if tr else 0.0,
+            "realized_pnl": round(float(st.get("total_realized_pnl") or 0.0)),
+            "status": st.get("status"),
+            "in_position": bool(st.get("position")),
+            "position_market": (st.get("position") or {}).get("market"),
+            "position_name": (st.get("position") or {}).get("name"),
+            "unrealized_pct": (st.get("position") or {}).get("unrealized_pct"),
+            "last_event": st.get("last_event"),
+        })
+
+    board.sort(key=lambda r: (-r["ret_pct"], -r["equity"], r["key"]))
+    for i, row in enumerate(board, 1):
+        row["rank"] = i
+    state["leaderboard"] = board
 
     merged.sort(key=lambda t: (t.get("exit_time") or t.get("entry_time") or ""))
-    state["recent_trades"] = merged[-60:]
+    state["recent_trades"] = merged[-120:]
 
     state["current_equity"] = round(total_equity)
     state["initial_capital"] = round(total_capital)
@@ -517,147 +869,178 @@ def _aggregate(state, stream):
     state["losses"] = losses
     state["position"] = None
     state["peak_equity"] = round(max(float(state.get("peak_equity") or total_capital), total_equity))
-    dd = ((state["peak_equity"] - total_equity) / state["peak_equity"] * 100) if state["peak_equity"] else 0.0
+    dd = ((state["peak_equity"] - total_equity) / state["peak_equity"] * 100) \
+        if state["peak_equity"] else 0.0
     state["max_drawdown_pct"] = round(max(float(state.get("max_drawdown_pct") or 0.0), dd), 2)
     if in_position:
         state["status"] = "IN_POSITION"
     elif cooling:
         state["status"] = "COOLDOWN"
     else:
-        state["status"] = "WAITING_FOR_SURGE"
+        state["status"] = "WAITING_FOR_SIGNAL"
     state["cooldown_until"] = max(
-        [state["tiers"][k]["cooldown_until"] for k in TIER_KEYS
-         if state["tiers"][k].get("cooldown_until")] or [None], key=lambda x: x or "")
+        [state["strategies"][k]["cooldown_until"] for k in STRATEGY_KEYS
+         if state["strategies"][k].get("cooldown_until")] or [None], key=lambda x: x or "")
     state["active_positions"] = in_position
+    state["leader"] = board[0]["key"] if board else None
+    state["laggard"] = board[-1]["key"] if board else None
+    _alias_legacy(state)
     return state
 
 
 def run_sniper_tick(stream=None):
     state = load_state()
-    if state.get("version") != VERSION or not isinstance(state.get("tiers"), dict):
-        state = ensure_v3_state()
 
-    rules = state.get("rules") or DEFAULT_RULES_V3
-    if state.get("rules") != DEFAULT_RULES_V3:
-        state["rules"] = DEFAULT_RULES_V3
-        rules = DEFAULT_RULES_V3
+    # ---- 안전장치: Gist가 설정된 환경에서는 원격 상태를 실제로 읽었을 때만 매매/저장한다 ----
+    # (원격 로드 실패 → 로컬 폴백 상태로 체결하면 낡은 데이터로 라이브 전적을 덮어쓸 수 있다)
+    if gist_enabled() and last_load_source() != "gist":
+        now_ts = time.time()
+        if (now_ts - _ensure_guard["ts"]) >= 5.0:
+            _ensure_guard["ts"] = now_ts
+            state = ensure_v4_state()
+        if gist_enabled() and last_load_source() != "gist":
+            return {"status": "STATE_SYNC_WAIT",
+                    "event": "Gist 원격 상태 복구 대기 — 매매·저장 중단 (로컬 폴백 상태 사용 금지)",
+                    "equity": state.get("current_equity"),
+                    "ret_pct": state.get("current_ret_pct"),
+                    "trades": state.get("total_trades")}
+
+    if state.get("version") != VERSION or not isinstance(state.get("strategies"), dict):
+        now_ts = time.time()
+        if (now_ts - _ensure_guard["ts"]) >= 5.0:
+            _ensure_guard["ts"] = now_ts
+            state = ensure_v4_state()
+        if state.get("version") != VERSION or not isinstance(state.get("strategies"), dict):
+            return {"status": "MIGRATION_WAIT", "event": "v4.0 승계 대기 (Gist 로드 재시도 중)",
+                    "equity": state.get("current_equity"), "ret_pct": state.get("current_ret_pct"),
+                    "trades": state.get("total_trades")}
+
+    rules = state.get("rules") or RULES_V4
+    if rules != RULES_V4:
+        state["rules"] = RULES_V4
     now = kst_now()
     now_ms = _now_ms()
     state["last_checked_time"] = fmt(now)
     events = []
-    exited_now = set()   # 같은 틱에서 청산 직후 재매수하지 않는다 (v3.0과 동일한 동작)
+    exited_now = set()
 
-    # ---------- 1. 계좌별 보유 포지션 청산 감시 ----------
-    for key in TIER_KEYS:
-        tier = state["tiers"][key]
-        if tier.get("position"):
-            exit_hit = _check_exit(tier, rules, stream, now)
-            if exit_hit:
-                price, reason, kind = exit_hit
-                pnl, gain = _close_position(tier, rules, price, reason, now, kind)
-                tier["last_event"] = f"SELL {tier['recent_trades'][-1]['market']} {gain:+.2f}% / {pnl:+,.0f}원"
-                events.append(f"[{tier['label']}] {tier['last_event']}")
-                exited_now.add(key)
-            else:
-                pos = tier["position"]
-                cur = _position_price(pos, stream)
-                if cur:
-                    pos["last_price"] = cur
-                gain = ((cur - pos["entry_price"]) / pos["entry_price"] * 100.0) if cur else 0.0
-                pos["unrealized_pct"] = round(gain, 2)
-                tier["last_event"] = f"HOLDING {pos.get('name')}({pos['market']}) {gain:+.2f}%"
+    # ---------- 1. 전략별 보유 포지션 청산 감시 ----------
+    for key in STRATEGY_KEYS:
+        st = state["strategies"][key]
+        if not st.get("position"):
+            continue
+        hit = _check_exit(st, stream, now)
+        if hit:
+            price, reason, kind = hit
+            pnl, gain = _close_position(st, price, reason, now, kind)
+            st["last_event"] = f"SELL {st['recent_trades'][-1]['market']} {gain:+.2f}% / {pnl:+,.0f}원"
+            events.append(f"[{st['label']}] {st['last_event']}")
+            exited_now.add(key)
+        else:
+            pos = st["position"]
+            cur = _position_price(pos, stream)
+            gain = ((cur - pos["entry_price"]) / pos["entry_price"] * 100.0) if cur else 0.0
+            pos["unrealized_pct"] = round(gain, 2)
+            st["last_event"] = f"HOLDING {pos.get('name')}({pos['market']}) {gain:+.2f}%"
 
-    # ---------- 2. 공유 시장 스캔 (웹소켓 1회 수신분에서 모든 계좌가 동시에 판단) ----------
+    # ---------- 2. 공유 시장 스냅샷 (10전략이 같은 데이터를 동시에 판단) ----------
     btc = _btc_trend_cached()
     state["btc_trend"] = btc
-    bearish = bool(rules.get("btc_filter_enabled", True) and btc.get("is_bearish"))
+    bearish = bool(RULES_V4["btc_filter"]["enabled"] and btc.get("is_bearish"))
 
-    evaluations = []
+    snaps = []
     if stream is not None:
         for market in stream.markets():
-            m = _evaluate_market(stream, market, rules, now_ms)
-            if m:
-                evaluations.append(m)
+            snap = stream.market_snapshot(market, now_ms)
+            if snap:
+                snaps.append(_attach_candles(snap))
 
-    # ---------- 3. 계좌별 신규 진입 (서로 간섭 없음) ----------
-    for key in TIER_KEYS:
-        tier = state["tiers"][key]
-        if tier.get("position") or key in exited_now:
+    top_markets = set(stream.top_markets(10)) if (stream is not None and hasattr(stream, "top_markets")) else set()
+    ctx = {"state": state, "top_markets": top_markets, "btc": btc, "bearish": bearish}
+
+    # ---------- 3. 전략별 신규 진입 ----------
+    for key in STRATEGY_KEYS:
+        st = state["strategies"][key]
+        if st.get("position") or key in exited_now:
             continue
 
-        if tier.get("cooldown_until"):
+        if st.get("cooldown_until"):
             try:
-                cd = datetime.strptime(tier["cooldown_until"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+                cd = datetime.strptime(st["cooldown_until"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
                 if now < cd:
                     rem = int((cd - now).total_seconds())
-                    tier["status"] = "COOLDOWN"
-                    tier["last_event"] = f"⏳ 손절 쿨다운 {rem // 60}분 {rem % 60}초 남음"
+                    st["status"] = "COOLDOWN"
+                    st["last_event"] = f"⏳ 손절 쿨다운 {rem // 60}분 {rem % 60}초 남음"
                     continue
-                tier["cooldown_until"] = None
+                st["cooldown_until"] = None
             except Exception:
-                tier["cooldown_until"] = None
+                st["cooldown_until"] = None
 
         if bearish:
-            tier["status"] = "BTC_FILTER_BLOCKED"
-            tier["last_event"] = (f"🛑 BTC 15분봉 20이평 하회 ({btc.get('diff_pct', 0):+.2f}%) "
-                                  f"— 신규 진입 차단")
+            st["status"] = "BTC_FILTER_BLOCKED"
+            st["last_event"] = (f"🛑 BTC 15분봉 20이평 하회 ({btc.get('diff_pct', 0):+.2f}%) "
+                                f"— 신규 진입 차단")
             continue
 
-        tier["status"] = "WAITING_FOR_SURGE"
+        st["status"] = "WAITING_FOR_SIGNAL"
         if stream is None:
             continue
 
-        qualified = [m for m in evaluations if _tier_open_ok(m, tier, rules)]
-        if qualified:
-            best = max(qualified, key=lambda x: (x["surge_ratio"], x["short_krw"]))
-            market = _enter(tier, rules, stream, best, now)
+        best_ok, best_any = _evaluate_strategy(key, snaps, ctx)
+        if best_ok:
+            _, snap, why = best_ok
+            market = _enter(st, snap, now, stream, why)
             if market:
-                tier["last_event"] = (f"⚡ BUY {best['market']} {best['surge_ratio']:.1f}배 "
-                                      f"매수 {best['bid_ratio']*100:.0f}% 3분변동 {best['chg_3m_pct']:+.2f}%")
-                events.append(f"[{tier['label']}] {tier['last_event']}")
+                st["last_event"] = f"⚡ BUY {market} — {why}"
+                events.append(f"[{st['label']}] {st['last_event']}")
                 continue
-        line, watch = _watch_line(tier, evaluations)
-        tier["last_event"] = line
-        tier["watch"] = {
+        line, watch = _watch_line(st, best_any, len(snaps))
+        st["last_event"] = line
+        st["watch"] = {
             "market": watch["market"],
             "name": (stream.names().get(watch["market"]) or watch["market"]).replace("KRW-", ""),
             "short_krw": round(watch["short_krw"]),
             "surge_ratio": round(watch["surge_ratio"], 2),
             "bid_ratio": round(watch["bid_ratio"], 3),
-            "common_ok": watch["common_ok"],
+            "reason": best_any[2] if best_any else None,
         } if watch else None
 
-    # ---------- 4. 감시 패널 (공유 스캔 결과) ----------
-    solid = [m for m in evaluations if m["base_krw"] > 0 and m["base_ticks"] >= 3]
-    display_pool = [m for m in solid if m["short_krw"] >= 3_000_000] or \
+    # ---------- 4. 실시간 감시 패널 (스냅샷 재사용) ----------
+    solid = [s for s in snaps if s["base_krw"] > 0 and s["base_ticks"] >= 3]
+    display_pool = [s for s in solid if s["short_krw"] >= 3_000_000] or \
         sorted(solid, key=lambda x: x["short_krw"], reverse=True)[:6]
     top = sorted(display_pool, key=lambda x: x["surge_ratio"], reverse=True)[:6]
     names = stream.names() if stream else {}
+    scan_rows = []
+    for s in top:
+        qualified = [k for k in STRATEGY_KEYS
+                     if SIGNAL_FNS[STRATEGIES[k]["kind"]](s, state["strategies"][k], ctx)[0]]
+        scan_rows.append({
+            "market": s["market"],
+            "name": (names.get(s["market"]) or s["market"]).replace("KRW-", ""),
+            "price": s["last_price"],
+            "short_krw": round(s["short_krw"]),
+            "surge_ratio": round(s["surge_ratio"], 2),
+            "bid_ratio": round(s["bid_ratio"], 3),
+            "chg_3m_pct": round(s["chg_3m_pct"], 2),
+            "drawdown_from_high_pct": round(s["drawdown_from_high_pct"], 2)
+            if s.get("drawdown_from_high_pct") is not None else None,
+            "qualified": bool(qualified),
+            "qualified_strategies": qualified,
+            "qualified_tiers": [k for k in qualified if k in LEGACY_KEYS],
+        })
     state["live_scan"] = {
-        "scanned": len(evaluations),
-        "qualified": len([m for m in evaluations if m["qualified"]]),
-        "qualified_by_tier": {k: len([m for m in evaluations
-                                      if m["common_ok"] and m["short_krw"] >= float(TIERS[k]["min_short_krw"])])
-                              for k in TIER_KEYS},
-        "top": [{
-            "market": m["market"],
-            "name": (names.get(m["market"]) or m["market"]).replace("KRW-", ""),
-            "price": m["last_price"],
-            "short_krw": round(m["short_krw"]),
-            "surge_ratio": round(m["surge_ratio"], 2),
-            "bid_ratio": round(m["bid_ratio"], 3),
-            "chg_3m_pct": round(m["chg_3m_pct"], 2),
-            "qualified": m["qualified"],
-            "qualified_tiers": m["qualified_tiers"],
-            "reject": m["reject"],
-        } for m in top],
+        "scanned": len(snaps),
+        "qualified": len([r for r in scan_rows if r["qualified"]]),
+        "top_markets": sorted(top_markets)[:10],
+        "top": scan_rows,
     }
 
-    # ---------- 5. 보유 종목은 구독 유지 (상위 43종목에서 밀려나도 틱 계속 수신) ----------
+    # ---------- 5. 보유 종목은 구독 유지 ----------
     if stream is not None and hasattr(stream, "add_extra_markets"):
         try:
-            stream.add_extra_markets([state["tiers"][k]["position"]["market"] for k in TIER_KEYS
-                                      if state["tiers"][k].get("position")])
+            stream.add_extra_markets([state["strategies"][k]["position"]["market"]
+                                      for k in STRATEGY_KEYS if state["strategies"][k].get("position")])
         except Exception as e:
             print(f"[Engine] extra markets update failed: {e}")
 
@@ -666,10 +1049,12 @@ def run_sniper_tick(stream=None):
     if events:
         state["last_event"] = " | ".join(events)
     else:
-        state["last_event"] = " · ".join(f"{state['tiers'][k]['label']}: {state['tiers'][k]['last_event']}"
-                                         for k in TIER_KEYS)
+        lead = state["leaderboard"][0] if state.get("leaderboard") else None
+        state["last_event"] = (
+            f"10전략 대기 · 선두 {lead['name']}({lead['ret_pct']:+.2f}%)" if lead
+            else "10전략 대기")
 
-    trade_event = any(e for e in events if "BUY" in e or "SELL" in e)
+    trade_event = any(("BUY" in e or "SELL" in e) for e in events)
     save_state(state, remote=True, force_remote=trade_event)
 
     return {
@@ -681,25 +1066,26 @@ def run_sniper_tick(stream=None):
         "wins": state["wins"],
         "losses": state["losses"],
         "btc_trend": state.get("btc_trend"),
-        "tiers": {k: {
-            "equity": state["tiers"][k]["current_equity"],
-            "ret_pct": state["tiers"][k]["current_ret_pct"],
-            "status": state["tiers"][k]["status"],
-            "trades": state["tiers"][k]["total_trades"],
-            "event": state["tiers"][k]["last_event"],
-        } for k in TIER_KEYS},
+        "leader": state.get("leader"),
+        "leaderboard": [{"rank": r["rank"], "key": r["key"], "ret_pct": r["ret_pct"]}
+                        for r in state.get("leaderboard", [])],
     }
 
 
 if __name__ == "__main__":
+    from candles import CandleCache
     from ws_stream import UpbitTradeStream
     st = UpbitTradeStream()
     st.start()
-    secs = float(os.environ.get("V3_TEST_SECONDS", "20"))
+    cache = CandleCache(lambda: st.markets(), top_n=15)
+    cache.start()
+    set_candle_cache(cache)
+    secs = float(os.environ.get("V4_TEST_SECONDS", "25"))
     t_end = time.time() + secs
     while time.time() < t_end:
         print(json.dumps(run_sniper_tick(st), ensure_ascii=False, default=str))
         time.sleep(TICK_INTERVAL_SEC)
     print("WS STATS:", json.dumps(st.stats(), ensure_ascii=False))
-    print("GIST:", json.dumps(sync_status(), ensure_ascii=False))
+    print("CANDLES:", json.dumps(cache.stats(), ensure_ascii=False))
+    cache.stop()
     st.stop()

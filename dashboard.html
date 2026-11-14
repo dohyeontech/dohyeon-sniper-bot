@@ -3,116 +3,130 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>⚡ 가상 스나이퍼 봇 v3.1 · 3계좌 병렬 초단타</title>
+<title>🏆 10대 단타 전략 실시간 비교 리그 v4.0</title>
 <style>
   @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
   :root{
-    --bg:#080b12; --panel:#101725; --panel2:#0c1220; --line:#1e2a3f;
-    --txt:#e8edf7; --dim:#8291a9; --cyan:#38bdf8; --green:#34d399; --red:#fb7185;
-    --amber:#fbbf24; --violet:#a78bfa;
+    --bg:#070a10; --panel:#101623; --panel2:#0b111c; --line:#1d2739;
+    --txt:#e9eef7; --dim2:#8291a9; --cyan:#38bdf8; --green:#34d399; --red:#fb7185;
+    --amber:#fbbf24; --violet:#a78bfa; --gold:#fcd34d; --silver:#cbd5e1; --bronze:#e0a370;
   }
   *{box-sizing:border-box}
-  body{margin:0;background:var(--bg);color:var(--txt);font-family:'Pretendard',-apple-system,sans-serif;
-       -webkit-font-smoothing:antialiased;padding:18px 14px 48px}
-  .wrap{max-width:1000px;margin:0 auto}
+  body{margin:0;background:radial-gradient(1200px 500px at 50% -180px,#0d1a2b 0%,var(--bg) 60%);
+       color:var(--txt);font-family:'Pretendard',-apple-system,sans-serif;-webkit-font-smoothing:antialiased;
+       padding:16px 13px 46px}
+  .wrap{max-width:1120px;margin:0 auto}
   .mono{font-family:ui-monospace,'SF Mono',Menlo,monospace;font-variant-numeric:tabular-nums}
   header{display:flex;flex-wrap:wrap;justify-content:space-between;align-items:flex-end;gap:12px;
-         padding-bottom:16px;border-bottom:1px solid var(--line);margin-bottom:16px}
-  h1{font-size:20px;margin:6px 0 4px;letter-spacing:-.3px}
-  .sub{font-size:12.5px;color:var(--dim)}
+         padding-bottom:14px;border-bottom:1px solid var(--line);margin-bottom:14px}
+  h1{font-size:20px;margin:7px 0 5px;letter-spacing:-.4px}
+  .sub{font-size:12.5px;color:var(--dim2);line-height:1.5}
   .badges{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:2px}
   .badge{font-size:11px;font-weight:700;padding:3px 10px;border-radius:999px;border:1px solid}
   .b-brand{color:var(--cyan);border-color:#0e4a63;background:#08222e}
   .b-live{color:var(--green);border-color:#12604a;background:#06231b}
   .b-off{color:var(--red);border-color:#6b2036;background:#2a0c14}
   .b-wait{color:var(--amber);border-color:#6b5314;background:#251c05}
+  .b-gold{color:var(--gold);border-color:#6b5314;background:#231a05}
   .dot{width:7px;height:7px;border-radius:50%;display:inline-block;margin-right:5px;vertical-align:1px}
   .dot.on{background:var(--green);box-shadow:0 0 8px var(--green);animation:pulse 1.8s infinite}
   .dot.off{background:var(--red)}
   @keyframes pulse{0%,100%{opacity:1}50%{opacity:.35}}
-  .tabs{display:flex;gap:6px;background:#0a1120;border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:16px}
-  .tab{flex:1;border:0;background:transparent;color:var(--dim);font-family:inherit;font-size:12.5px;font-weight:700;
+  .tabs{display:flex;gap:6px;background:#0a0f19;border:1px solid var(--line);border-radius:14px;padding:5px;margin-bottom:14px}
+  .tab{flex:1;border:0;background:transparent;color:var(--dim2);font-family:inherit;font-size:12.5px;font-weight:700;
        padding:10px 8px;border-radius:10px;cursor:pointer;transition:.15s}
   .tab:hover{color:#c7d3e6}
-  .tab.active{background:#0d2b3a;color:var(--cyan);box-shadow:inset 0 0 0 1px #17506a}
-  .grid{display:grid;gap:10px}
+  .tab.active{background:#11293a;color:var(--cyan);box-shadow:inset 0 0 0 1px #17506a}
+  h2{font-size:12.5px;margin:22px 0 8px;color:#c3d0e4;font-weight:800;letter-spacing:.2px}
+  h2 .hint{font-weight:500;color:var(--dim2);font-size:11px}
+  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:12px 13px}
+  .card .k{font-size:10.5px;color:var(--dim2);font-weight:600;margin-bottom:4px}
+  .card .v{font-size:18px;font-weight:800;letter-spacing:-.4px}
+  .card .s{font-size:10.5px;color:var(--dim2);margin-top:3px}
+  .grid{display:grid;gap:9px}
+  .g5{grid-template-columns:repeat(5,1fr)}
   .g4{grid-template-columns:repeat(4,1fr)}
   .g3{grid-template-columns:repeat(3,1fr)}
   .g2{grid-template-columns:repeat(2,1fr)}
-  .card{background:var(--panel);border:1px solid var(--line);border-radius:14px;padding:13px 14px}
-  .card .k{font-size:11px;color:var(--dim);font-weight:600;margin-bottom:5px;letter-spacing:.2px}
-  .card .v{font-size:19px;font-weight:800;letter-spacing:-.5px}
-  .card .s{font-size:11px;color:var(--dim);margin-top:4px}
-
-  /* ---- 대금별 3계좌 비교 카드 ---- */
-  .tiergrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
-  .tcard{position:relative;background:linear-gradient(180deg,#0f1a2a,#0b1320);border:1px solid var(--line);
-         border-radius:16px;padding:13px 13px 12px;cursor:pointer;transition:.16s;text-align:left;
-         font-family:inherit;color:var(--txt)}
-  .tcard:hover{border-color:#2a4a68;transform:translateY(-1px)}
-  .tcard.sel{border-color:var(--cyan);box-shadow:0 0 0 1px #17506a,0 0 26px rgba(56,189,248,.16)}
-  .tcard.hold{border-color:#1b4a63}
-  .tcard .thead{display:flex;justify-content:space-between;align-items:center;gap:6px}
-  .tcard .tlabel{font-size:16px;font-weight:900;letter-spacing:-.4px}
-  .tcard .tpill{font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:5px;white-space:nowrap}
-  .tp-agg{background:#2b1030;color:#e9a6ff;border:1px solid #52205f}
-  .tp-bal{background:#0b2b32;color:#5eead4;border:1px solid #14535f}
-  .tp-con{background:#0d2333;color:#7dd3fc;border:1px solid #1b4a63}
-  .tcard .tth{font-size:10px;color:var(--dim);margin-top:2px}
-  .tcard .teq{font-size:17px;font-weight:800;margin-top:8px;letter-spacing:-.4px}
-  .tcard .tret{font-size:11.5px;font-weight:700;margin-top:1px}
-  .tcard .tstat{font-size:10.5px;color:var(--dim);margin-top:7px;border-top:1px dashed #1b2740;padding-top:7px;
-                line-height:1.45;min-height:32px}
-  .tcard .tstat b{color:#c7d3e6}
-  .aggstrip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;background:#0a1420;border:1px solid #16233a;
-            border-radius:12px;padding:10px 13px;font-size:11.5px;color:var(--dim);margin-bottom:16px}
-  .aggstrip b{color:var(--txt);font-size:13px}
-  .aggstrip .sep{width:1px;height:14px;background:#1e2a3f}
-  .selbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 10px}
-  .selbar .lbl{font-size:11px;color:var(--dim);margin-right:2px}
-  .chip{font-size:11px;font-weight:700;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
-        background:#0c1421;color:var(--dim);cursor:pointer;font-family:inherit}
-  .chip.active{background:#0d2b3a;color:var(--cyan);border-color:#17506a}
-
-  .poscard{background:linear-gradient(180deg,#0d2030,#0b1524);border:1px solid #1b4a63;border-radius:14px;
-           padding:14px;margin:12px 0;box-shadow:0 0 24px rgba(56,189,248,.08)}
-  .poshead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
-  .tag{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:5px;background:var(--cyan);color:#04121b}
-  .tbadge{font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:#101c2c;color:#8fd4f0;
-          border:1px solid #1b4a63;margin-left:4px}
-  .posgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
-  .kv{background:#080e18;border:1px solid #16233a;border-radius:10px;padding:8px 9px}
-  .kv .k{font-size:10.5px;color:var(--dim)}
-  .kv .v{font-size:13px;font-weight:700;margin-top:2px}
-  .bar{height:6px;border-radius:999px;background:#101c2c;margin-top:10px;position:relative;overflow:hidden}
-  .bar>i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#34d399)}
-  h2{font-size:13px;margin:20px 0 8px;color:#c3d0e4;font-weight:800;letter-spacing:.2px}
+  .up{color:var(--green)} .down{color:var(--red)} .neu{color:var(--dim2)}
+  /* ---- 리더보드 ---- */
+  .board{background:linear-gradient(180deg,#0e1626,#0a1019);border:1px solid var(--line);border-radius:16px;
+         overflow:hidden;box-shadow:0 18px 40px -30px #000}
+  .board .bhead{display:flex;justify-content:space-between;align-items:center;gap:10px;padding:12px 14px 10px;
+                border-bottom:1px solid var(--line);flex-wrap:wrap}
+  .board .btitle{font-size:14px;font-weight:900;letter-spacing:-.3px}
+  .board .bmeta{font-size:10.5px;color:var(--dim2)}
   table{width:100%;border-collapse:collapse;font-size:12px}
-  th{text-align:left;font-size:10.5px;color:var(--dim);font-weight:700;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
-  td{padding:7px 8px;border-bottom:1px solid #131d2d;white-space:nowrap}
-  tbody tr:hover{background:#0d1626}
-  .up{color:var(--green)} .down{color:var(--red)} .neu{color:var(--dim)}
-  .pill{font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;display:inline-block}
-  .p-ok{background:#06291f;color:var(--green);border:1px solid #12604a}
-  .p-no{background:#24101a;color:#f0879c;border:1px solid #5d1f30}
+  th{text-align:left;font-size:10px;color:var(--dim2);font-weight:700;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
+  td{padding:8px;border-bottom:1px solid #121b29;white-space:nowrap;vertical-align:middle}
+  tbody tr{cursor:pointer;transition:background .12s}
+  tbody tr:hover{background:#0e1826}
+  tbody tr.sel{background:#0d2231;box-shadow:inset 3px 0 0 var(--cyan)}
+  .rk{font-weight:900;font-size:12.5px;width:34px;text-align:center}
+  .rk1{color:var(--gold)} .rk2{color:var(--silver)} .rk3{color:var(--bronze)}
+  .sname{font-weight:800;letter-spacing:-.2px}
+  .skey{font-size:9.5px;color:#5d6c82;font-family:ui-monospace,monospace}
+  .stratcell{display:flex;flex-direction:column;gap:1px;min-width:0}
+  .retbar{height:4px;border-radius:999px;background:#0a1220;margin-top:4px;overflow:hidden;position:relative}
+  .retbar>i{position:absolute;top:0;bottom:0;border-radius:999px}
+  .pill{font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:5px;display:inline-block;white-space:nowrap}
+  .p-legacy{background:#0b2b32;color:#5eead4;border:1px solid #14535f}
+  .p-new{background:#1b1636;color:#c4b5fd;border:1px solid #3b2c63}
+  .p-hold{background:#0d2333;color:#7dd3fc;border:1px solid #1b4a63}
+  .p-cool{background:#2a1c05;color:var(--amber);border:1px solid #6b5314}
+  .p-btc{background:#24101a;color:#f0879c;border:1px solid #5d1f30}
+  .p-wait{background:#111a27;color:#8fa1b8;border:1px solid #23304a}
+  .p-proto{background:#06291f;color:var(--green);border:1px solid #12604a}
   .p-buy{background:#06222e;color:var(--cyan);border:1px solid #17506a}
   .p-sell{background:#2a1020;color:#f9a8d4;border:1px solid #63203f}
-  .p-t3{background:#0b2b32;color:#5eead4;border:1px solid #14535f}
-  .p-t10{background:#0d2333;color:#7dd3fc;border:1px solid #1b4a63}
-  .p-t30{background:#241a3a;color:#c4b5fd;border:1px solid #3b2c63}
-  .rej{color:#f0879c;font-size:10.5px;white-space:normal;max-width:260px;line-height:1.35}
-  .scroll{max-height:420px;overflow:auto}
-  .small{font-size:11px;color:var(--dim);line-height:1.55}
-  .note{background:#0b1420;border:1px solid #16233a;border-left:3px solid var(--amber);border-radius:8px;
-        padding:9px 11px;font-size:11.5px;color:#c9b98d;line-height:1.5;margin-top:10px}
+  /* ---- 전략 카드 ---- */
+  .cards{display:grid;grid-template-columns:repeat(5,1fr);gap:8px}
+  .sc{position:relative;text-align:left;font-family:inherit;color:var(--txt);cursor:pointer;
+      background:linear-gradient(180deg,#0f1828,#0a1119);border:1px solid var(--line);border-radius:13px;
+      padding:10px 11px 9px;transition:.15s}
+  .sc:hover{border-color:#2a4a68;transform:translateY(-1px)}
+  .sc.sel{border-color:var(--cyan);box-shadow:0 0 0 1px #17506a,0 0 24px rgba(56,189,248,.15)}
+  .sc.hold{border-color:#1b4a63}
+  .sc .scrank{font-size:9.5px;font-weight:900;color:#5d6c82;letter-spacing:.4px}
+  .sc .scname{font-size:12.5px;font-weight:900;letter-spacing:-.3px;margin-top:2px;line-height:1.25}
+  .sc .sclabel{font-size:9.5px;color:var(--dim2);margin-top:1px;font-family:ui-monospace,monospace}
+  .sc .sceq{font-size:13.5px;font-weight:800;margin-top:6px;letter-spacing:-.3px}
+  .sc .scret{font-size:11.5px;font-weight:800}
+  .sc .scstat{font-size:9.5px;color:var(--dim2);margin-top:5px;border-top:1px dashed #1a2436;padding-top:5px;line-height:1.4}
+  /* ---- 상세 ---- */
+  .detail{background:linear-gradient(180deg,#0d1624,#0a1018);border:1px solid #1b3348;border-radius:16px;padding:13px 14px;margin-top:10px}
+  .dhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .dname{font-size:15px;font-weight:900;letter-spacing:-.3px}
+  .dsub{font-size:11px;color:var(--dim2);margin-top:3px}
+  .dret{font-size:20px;font-weight:900;letter-spacing:-.6px}
+  .kv{background:#080e18;border:1px solid #16233a;border-radius:10px;padding:7px 9px}
+  .kv .k{font-size:10px;color:var(--dim2)}
+  .kv .v{font-size:12.5px;font-weight:700;margin-top:2px;white-space:normal;line-height:1.35}
+  .rulebox{background:#080e18;border:1px solid #16233a;border-radius:10px;padding:9px 10px;font-size:11.5px;line-height:1.55;color:#c7d3e6}
+  .rulebox b{color:var(--cyan)}
+  .rulebox .rk2{color:var(--green)}
+  .poscard{background:linear-gradient(180deg,#0d2030,#0b1524);border:1px solid #1b4a63;border-radius:13px;
+           padding:12px;margin:10px 0;box-shadow:0 0 24px rgba(56,189,248,.07)}
+  .poshead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:9px;flex-wrap:wrap}
+  .tag{font-size:10px;font-weight:800;padding:2px 8px;border-radius:5px;background:var(--cyan);color:#04121b}
+  .posgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:7px}
+  .bar{height:6px;border-radius:999px;background:#0c1724;margin-top:9px;position:relative;overflow:hidden}
+  .bar>i{position:absolute;left:0;top:0;bottom:0;border-radius:999px;background:linear-gradient(90deg,#0ea5e9,#34d399)}
+  .scroll{max-height:430px;overflow:auto}
+  .small{font-size:10.5px;color:var(--dim2);line-height:1.55}
+  .rej{color:#f0879c;font-size:10px;white-space:normal;max-width:220px;line-height:1.35}
+  .note{background:#0a121c;border:1px solid #16233a;border-left:3px solid var(--amber);border-radius:8px;
+        padding:8px 10px;font-size:11px;color:#c9b98d;line-height:1.5;margin-top:9px}
   .hidden{display:none!important}
-  footer{margin-top:26px;text-align:center;font-size:11px;color:#4c5a70;line-height:1.7}
+  footer{margin-top:24px;text-align:center;font-size:10.5px;color:#46536a;line-height:1.75}
+  @media(max-width:900px){
+    .cards{grid-template-columns:repeat(3,1fr)} .g5{grid-template-columns:repeat(3,1fr)}
+  }
   @media(max-width:720px){
-    .g4{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:1fr} .g2{grid-template-columns:1fr}
-    .posgrid{grid-template-columns:repeat(2,1fr)} h1{font-size:17px}
-    .tab{font-size:11px;padding:9px 4px}
-    .tiergrid{grid-template-columns:1fr;gap:8px}
-    .tcard .tstat{min-height:0}
+    .g5,.g4{grid-template-columns:repeat(2,1fr)} .g3,.g2{grid-template-columns:1fr}
+    .cards{grid-template-columns:repeat(2,1fr)} .posgrid{grid-template-columns:repeat(2,1fr)}
+    h1{font-size:16.5px} .tab{font-size:10.5px;padding:9px 3px}
+    .board .lib{display:none}
   }
 </style>
 </head>
@@ -122,102 +136,108 @@
     <div>
       <div class="badges">
         <span class="badge b-brand">도현의 테크브리프</span>
-        <span id="verBadge" class="badge b-live"><span id="verDot" class="dot on"></span>v3.1 3계좌 병렬</span>
+        <span class="badge b-gold">🏆 v4.0 · 10전략 리그</span>
         <span id="wsBadge" class="badge b-wait"><span class="dot off"></span>WS 연결 확인 중</span>
+        <span id="btcBadge" class="badge b-wait">BTC 필터 확인 중</span>
       </div>
-      <h1>⚡ 가상 스나이퍼 봇 v3.1 · 대금별 3계좌</h1>
-      <div class="sub">업비트 실시간 체결 스트림 · 웹소켓 1개 공유 · 1.5초 판단 · 계좌당 모의 시드 200만 원(총 600만 원)</div>
+      <h1>🏆 10대 단타 전략 실시간 비교 리그 v4.0</h1>
+      <div class="sub" id="subline">업비트 실시간 체결 스트림 1개 · 10개 독립 가상 계좌 동시 운용 · 전략당 모의 시드 200만 원(총 2,000만 원)</div>
     </div>
     <div style="text-align:right">
       <div class="small">마지막 엔진 판단</div>
-      <div id="lastChecked" class="mono" style="font-size:13px;color:#c7d3e6">—</div>
+      <div id="lastChecked" class="mono" style="font-size:12.5px;color:#c7d3e6">—</div>
     </div>
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-tab="v3" onclick="showTab('v3')">⚡ v3.1 라이브 (3계좌)</button>
+    <button class="tab active" data-tab="v4" onclick="showTab('v4')">🏆 v4.0 리그 (10전략)</button>
     <button class="tab" data-tab="v2" onclick="showTab('v2')">📦 v2.0 아카이브</button>
     <button class="tab" data-tab="v1" onclick="showTab('v1')">📦 v1.0 아카이브</button>
   </div>
 
-  <!-- ================= v3 LIVE ================= -->
-  <section id="tab-v3">
-    <h2 style="margin-top:2px">⚖️ 대금별 3계좌 비교 <span class="small" style="font-weight:500">— 카드를 누르면 해당 계좌 상세</span></h2>
-    <div class="tiergrid" id="tierCards">
-      <div class="tcard"><div class="tlabel">불러오는 중…</div></div>
-    </div>
-    <div class="aggstrip" id="aggStrip">통합 지표 불러오는 중…</div>
+  <!-- ================= v4 LEAGUE ================= -->
+  <section id="tab-v4">
+    <div class="aggstrip card" id="aggStrip" style="margin-bottom:10px">통합 지표 불러오는 중…</div>
 
-    <div class="selbar">
-      <span class="lbl">보기</span>
-      <button class="chip active" data-sel="all" onclick="selectTier('all')">통합</button>
-      <button class="chip" data-sel="3m" onclick="selectTier('3m')">300만↑</button>
-      <button class="chip" data-sel="10m" onclick="selectTier('10m')">1,000만↑</button>
-      <button class="chip" data-sel="30m" onclick="selectTier('30m')">3,000만↑</button>
-    </div>
-
-    <div class="grid g4">
-      <div class="card"><div class="k" id="lblEquity">평가 자산</div><div id="equity" class="v mono">—</div><div id="seed" class="s">시드 —</div></div>
-      <div class="card"><div class="k">수익률</div><div id="ret" class="v mono">—</div><div id="pnl" class="s">실현 —</div></div>
-      <div class="card"><div class="k">현재 상태</div><div id="status" class="v" style="font-size:16px">—</div><div id="cash" class="s">현금 —</div></div>
-      <div class="card"><div class="k">전적 (승률)</div><div id="record" class="v mono">—</div><div id="counts" class="s">—</div></div>
-    </div>
-
-    <div id="posCards"></div>
-
-    <h2>📡 웹소켓 수신 상태 <span class="small" style="font-weight:500">— 3계좌 공유 연결 1개</span></h2>
-    <div class="grid g4">
-      <div class="card"><div class="k">연결</div><div id="wsConn" class="v" style="font-size:15px">—</div><div id="wsConnAt" class="s">—</div></div>
-      <div class="card"><div class="k">구독 마켓</div><div id="wsMarkets" class="v mono">—</div><div class="s">유의종목 제외 · 24h 30억↑</div></div>
-      <div class="card"><div class="k">초당 틱</div><div id="wsTps" class="v mono">—</div><div id="wsTotal" class="s">누적 —</div></div>
-      <div class="card"><div class="k">마지막 수신</div><div id="wsAge" class="v mono" style="font-size:15px">—</div><div id="wsRecon" class="s">재연결 —</div></div>
-    </div>
-
-    <h2>🔎 실시간 초입 감시 (최근 15초 / 직전 3분)</h2>
-    <div class="card" style="padding:8px 6px">
-      <div class="scroll" style="max-height:300px">
+    <h2>🥇 실시간 수익률 리더보드 <span class="hint">— 1위부터 10위, 행을 누르면 전략 상세</span></h2>
+    <div class="board">
+      <div class="bhead">
+        <div>
+          <div class="btitle">10전략 순위표</div>
+          <div class="bmeta" id="boardMeta">—</div>
+        </div>
+        <div class="bmeta" id="boardUpdated">—</div>
+      </div>
+      <div style="overflow-x:auto">
         <table>
-          <thead><tr><th>종목</th><th>현재가</th><th>15초 거래대금</th><th>폭발배수</th><th>매수비율</th><th>3분변동</th><th>진입 가능 계좌</th></tr></thead>
-          <tbody id="scanBody"><tr><td colspan="7" class="neu" style="padding:14px">웹소켓 틱 수신 대기 중…</td></tr></tbody>
+          <thead>
+            <tr>
+              <th style="width:36px">순위</th>
+              <th>전략</th>
+              <th style="text-align:right">평가자산</th>
+              <th style="text-align:right">수익률</th>
+              <th style="text-align:right" class="lib">실현손익</th>
+              <th style="text-align:right">승률</th>
+              <th style="text-align:right" class="lib">전적</th>
+              <th>상태</th>
+              <th class="lib">최근 이벤트</th>
+            </tr>
+          </thead>
+          <tbody id="boardBody">
+            <tr><td colspan="9" class="neu" style="padding:14px">불러오는 중…</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h2>🎴 전략 카드 <span class="hint">— 순위 순, 카드를 누르면 상세</span></h2>
+    <div class="cards" id="stratCards">
+      <div class="sc"><div class="scname">불러오는 중…</div></div>
+    </div>
+
+    <div id="detailPanel"></div>
+
+    <h2>📡 수신 상태 · 필터 · 영속성</h2>
+    <div class="grid g5">
+      <div class="card"><div class="k">WebSocket</div><div id="wsConn" class="v" style="font-size:13.5px">—</div><div id="wsConnAt" class="s">—</div></div>
+      <div class="card"><div class="k">구독 마켓 / 초당 틱</div><div id="wsMarkets" class="v mono">—</div><div id="wsTps" class="s">—</div></div>
+      <div class="card"><div class="k">1분봉 캐시</div><div id="candles" class="v mono" style="font-size:13.5px">—</div><div id="candleDetail" class="s">—</div></div>
+      <div class="card"><div class="k">BTC 추세 필터</div><div id="btcTrend" class="v" style="font-size:13px">—</div><div id="btcDetail" class="s">—</div></div>
+      <div class="card"><div class="k">Gist 영속성</div><div id="gist" class="v" style="font-size:12.5px">—</div><div id="gistDetail" class="s">—</div></div>
+    </div>
+
+    <h2>🔎 실시간 시장 감시 <span class="hint">— 같은 스냅샷에 어느 전략이 반응하는지</span></h2>
+    <div class="card" style="padding:7px 5px">
+      <div class="scroll" style="max-height:320px">
+        <table>
+          <thead><tr><th>종목</th><th style="text-align:right">현재가</th><th style="text-align:right">15초 대금</th><th style="text-align:right">폭발배수</th><th style="text-align:right">매수</th><th style="text-align:right">3분변동</th><th style="text-align:right" class="lib">고점대비</th><th>신호 발생 전략</th></tr></thead>
+          <tbody id="scanBody"><tr><td colspan="8" class="neu" style="padding:14px">웹소켓 틱 수신 대기 중…</td></tr></tbody>
         </table>
       </div>
       <div class="small" id="scanSummary" style="padding:7px 8px 2px">—</div>
     </div>
 
-    <h2>🧭 필터 · 계좌별 쿨다운 · 영속성</h2>
-    <div class="grid g2">
-      <div class="card"><div class="k">BTC 추세 필터 (3계좌 공통)</div><div id="btcTrend" class="v" style="font-size:15px">—</div><div id="btcDetail" class="s">—</div></div>
-      <div class="card"><div class="k">Gist 영속성</div><div id="gist" class="v" style="font-size:13px">—</div><div id="gistDetail" class="s">—</div></div>
+    <h2>⚙️ 10전략 규칙표 <span class="hint">— 같은 시장 데이터, 다른 진입·청산 규칙</span></h2>
+    <div class="card" style="padding:6px">
+      <div style="overflow-x:auto">
+        <table>
+          <thead><tr><th>전략</th><th>성향</th><th>진입 규칙</th><th>청산 규칙</th></tr></thead>
+          <tbody id="rulesBody"><tr><td colspan="4" class="neu" style="padding:12px">—</td></tr></tbody>
+        </table>
+      </div>
     </div>
-    <div class="grid g3" style="margin-top:10px" id="coolGrid"></div>
-
-    <h2>⚙️ v3.1 매매 규칙</h2>
-    <div class="card">
-      <table>
-        <tbody>
-          <tr><td style="width:120px;color:var(--dim)">운용 구조</td><td><b>웹소켓 1개 공유 · 3개 독립 계좌 병렬</b> — 계좌별 잔고·포지션·전적·쿨다운 분리 (v3.0: 단일 계좌)</td></tr>
-          <tr><td style="color:var(--dim)">계좌 ①</td><td><b>3,000만↑</b> 보수형 · 대형 슈팅 — 15초 거래대금 <b>≥ 30,000,000원</b></td></tr>
-          <tr><td style="color:var(--dim)">계좌 ②</td><td><b>1,000만↑</b> 균형형 · 중형 슈팅 — 15초 거래대금 <b>≥ 10,000,000원</b></td></tr>
-          <tr><td style="color:var(--dim)">계좌 ③</td><td><b>300만↑</b> 공격형 · 초민감 스캘핑 — 15초 거래대금 <b>≥ 3,000,000원</b></td></tr>
-          <tr><td style="color:var(--dim)">진입 엔진</td><td>업비트 <b>WebSocket 체결(trade) 스트림</b> — <b>1.5초</b> 주기 판단</td></tr>
-          <tr><td style="color:var(--dim)">진입 1</td><td>BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 신규 진입 차단 (3계좌 공통)</td></tr>
-          <tr><td style="color:var(--dim)">진입 2</td><td>최근 15초 거래대금 ≥ 직전 3분 평균 15초 거래대금 <b>× 4.0</b></td></tr>
-          <tr><td style="color:var(--dim)">진입 3</td><td>최근 15초 거래대금 <b>≥ 계좌별 문턱</b> (3,000만 / 1,000만 / 300만)</td></tr>
-          <tr><td style="color:var(--dim)">진입 4</td><td>최근 15초 매수 체결(BID) 금액 비율 <b>≥ 70%</b></td></tr>
-          <tr><td style="color:var(--dim)">진입 5</td><td>3분 전 가격 대비 <b>+0.3% ~ +3.0%</b> (초입만, 뒷북 추격 차단)</td></tr>
-          <tr><td style="color:var(--dim)">청산</td><td>목표 <b>+2.5%</b> · 트레일링 <b>+1.5% 도달 후 고점 대비 -0.4%</b> · 손절 <b>-1.8%(5분 쿨다운)</b> · 최대 보유 <b>20분</b> — 계좌별 1.5초 틱 감시</td></tr>
-          <tr><td style="color:var(--dim)">체결 가정</td><td>목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%</td></tr>
-          <tr><td style="color:var(--dim)">자금</td><td>계좌별 가용 현금 100% 단일 포지션 · <b>손절 쿨다운도 계좌별 독립</b></td></tr>
-        </tbody>
-      </table>
+    <div class="note">
+      공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 전 전략 신규 진입 차단(보유 유지).
+      목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
+      손절 시에만 전략별 쿨다운이 걸리며 그 쿨다운도 계좌별로 독립입니다.
     </div>
 
-    <h2>📜 v3.1 매매 기록 <span class="small" id="tradeFilterLabel" style="font-weight:500">— 통합</span></h2>
-    <div class="card" style="padding:8px 6px">
+    <h2>📜 매매 기록 <span class="small" id="tradeFilterLabel" style="font-weight:500">— 10전략 통합</span></h2>
+    <div class="card" style="padding:7px 5px">
       <div class="scroll">
         <table>
-          <thead><tr><th>계좌</th><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th>진입가</th><th>청산가</th><th>손익%</th><th>손익(원)</th><th>사유</th></tr></thead>
-          <tbody id="tradeBody"><tr><td colspan="10" class="neu" style="padding:14px">3계좌 × 200만 원 신규 시드로 0전 0승 0패 시작</td></tr></tbody>
+          <thead><tr><th>전략</th><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th style="text-align:right">진입가</th><th style="text-align:right">청산가</th><th style="text-align:right">손익%</th><th style="text-align:right">손익(원)</th><th>사유</th></tr></thead>
+          <tbody id="tradeBody"><tr><td colspan="10" class="neu" style="padding:14px">—</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -225,38 +245,38 @@
 
   <!-- ================= ARCHIVES ================= -->
   <section id="tab-v2" class="hidden">
-    <div class="card" style="margin-bottom:12px">
-      <div style="font-size:15px;font-weight:800" id="v2Title">📦 v2.0 아카이브</div>
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:14px;font-weight:800" id="v2Title">📦 v2.0 아카이브</div>
       <div class="small" id="v2Period" style="margin-top:4px">불러오는 중…</div>
     </div>
     <div class="grid g4" id="v2Stats"></div>
     <div id="v2OpenNote"></div>
-    <div class="card" style="margin-top:12px"><table><tbody id="v2Rules"></tbody></table></div>
+    <div class="card" style="margin-top:10px"><table><tbody id="v2Rules"></tbody></table></div>
     <h2>📜 v2.0 매매 기록</h2>
-    <div class="card" style="padding:8px 6px"><div class="scroll"><table>
-      <thead><tr><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th>진입가</th><th>청산가</th><th>손익%</th><th>손익(원)</th><th>사유</th></tr></thead>
+    <div class="card" style="padding:7px 5px"><div class="scroll"><table>
+      <thead><tr><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th style="text-align:right">진입가</th><th style="text-align:right">청산가</th><th style="text-align:right">손익%</th><th style="text-align:right">손익(원)</th><th>사유</th></tr></thead>
       <tbody id="v2Trades"><tr><td colspan="9" class="neu" style="padding:14px">불러오는 중…</td></tr></tbody>
     </table></div></div>
     <div class="note" id="v2Note"></div>
   </section>
 
   <section id="tab-v1" class="hidden">
-    <div class="card" style="margin-bottom:12px">
-      <div style="font-size:15px;font-weight:800" id="v1Title">📦 v1.0 아카이브</div>
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:14px;font-weight:800" id="v1Title">📦 v1.0 아카이브</div>
       <div class="small" id="v1Period" style="margin-top:4px">불러오는 중…</div>
     </div>
     <div class="grid g4" id="v1Stats"></div>
-    <div class="card" style="margin-top:12px"><table><tbody id="v1Rules"></tbody></table></div>
+    <div class="card" style="margin-top:10px"><table><tbody id="v1Rules"></tbody></table></div>
     <h2>📜 v1.0 매매 기록</h2>
-    <div class="card" style="padding:8px 6px"><div class="scroll"><table>
-      <thead><tr><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th>진입가</th><th>청산가</th><th>손익%</th><th>손익(원)</th><th>사유</th></tr></thead>
+    <div class="card" style="padding:7px 5px"><div class="scroll"><table>
+      <thead><tr><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th style="text-align:right">진입가</th><th style="text-align:right">청산가</th><th style="text-align:right">손익%</th><th style="text-align:right">손익(원)</th><th>사유</th></tr></thead>
       <tbody id="v1Trades"><tr><td colspan="9" class="neu" style="padding:14px">불러오는 중…</td></tr></tbody>
     </table></div></div>
   </section>
 
   <footer>
-    가상 자금(모의 시드 3계좌 × 200만 원) 운용 대시보드 · 실계좌·실주문 없음<br>
-    자체 알고리즘 설계 · Render 24/7 클라우드 · Gist 영속성
+    가상 자금 운용 대시보드 · 실계좌·실주문 없음 · 자체 알고리즘 설계<br>
+    Render 24/7 클라우드 · Gist 영속성 · v1·v2 아카이브 보존
   </footer>
 </div>
 
@@ -265,7 +285,7 @@ const $ = id => document.getElementById(id);
 const won = n => (n==null||isNaN(n)) ? '—' : Number(n).toLocaleString('ko-KR');
 const pct = n => (n==null||isNaN(n)) ? '—' : (n>0?'+':'') + Number(n).toFixed(2) + '%';
 const cls = n => n>0 ? 'up' : (n<0 ? 'down' : 'neu');
-const esc = s => String(s==null?'':s).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
+const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const money = n => {
   n = Number(n||0);
   if (Math.abs(n) >= 1e8) return (n/1e8).toFixed(2) + '억';
@@ -285,30 +305,33 @@ const holdMin = s => {
   const m = (Date.now() - t) / 60000;
   return m < 60 ? m.toFixed(1) + '분' : Math.floor(m/60) + '시간 ' + Math.round(m%60) + '분';
 };
+const medals = ['🥇','🥈','🥉'];
 
-// 표시 순서: 초민감(300만) → 균형(1,000만) → 보수(3,000만)
-const DISPLAY_ORDER = ['3m','10m','30m'];
-const TIER_PILL = {'3m':'tp-agg','10m':'tp-bal','30m':'tp-con'};
-const TIER_PILL_CLASS = {'3m':'p-t3','10m':'p-t10','30m':'p-t30'};
-let selTier = 'all';
+let selKey = 'all';
 let lastData = null;
+const builtCards = {};
 
 function showTab(t){
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
-  ['v3','v2','v1'].forEach(x => $('tab-'+x).classList.toggle('hidden', x !== t));
+  ['v4','v2','v1'].forEach(x => $('tab-'+x).classList.toggle('hidden', x !== t));
   if (t === 'v2') loadArchive('v2');
   if (t === 'v1') loadArchive('v1');
 }
 
-function selectTier(k){
-  selTier = k;
-  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.sel === k));
+function selectStrategy(k){
+  selKey = (selKey === k) ? 'all' : k;
   if (lastData) renderStatus(lastData);
+  if (selKey !== 'all' && $('detailPanel')) $('detailPanel').scrollIntoView({behavior:'smooth', block:'center'});
 }
+
+document.addEventListener('click', e => {
+  const el = e.target.closest('[data-key]');
+  if (el) selectStrategy(el.dataset.key);
+});
 
 function cooldownLeft(until){
   if (!until) return null;
-  const t = new Date(until.replace(' ','T') + '+09:00').getTime();
+  const t = new Date(String(until).replace(' ','T') + '+09:00').getTime();
   const left = t - Date.now();
   return left > 0 ? left : 0;
 }
@@ -317,243 +340,340 @@ function cdText(ms){
   return `${m}분 ${s}초`;
 }
 
-function tierStatusText(t){
+function statusPill(t){
   if (t.position){
-    const p = t.position;
-    const g = Number(p.unrealized_pct||0);
-    return `<b class="${cls(g)}">보유 ${esc(p.name||p.market)} ${pct(g)}</b>`;
+    const g = Number(t.position.unrealized_pct||0);
+    return `<span class="pill p-hold">보유 ${esc(t.position.name||t.position.market)} <b class="${cls(g)}">${pct(g)}</b></span>`;
   }
   const ms = cooldownLeft(t.cooldown_until);
-  if (ms) return `<b style="color:var(--amber)">쿨다운 ${cdText(ms)}</b>`;
-  if (t.status === 'BTC_FILTER_BLOCKED') return '<b style="color:var(--red)">BTC 필터 대기</b>';
-  return '<b style="color:var(--violet)">초입 대기</b>';
+  if (ms) return `<span class="pill p-cool">쿨다운 ${cdText(ms)}</span>`;
+  if (t.status === 'BTC_FILTER_BLOCKED') return `<span class="pill p-btc">BTC 필터 차단</span>`;
+  return `<span class="pill p-wait">신호 대기</span>`;
 }
 
-function renderTierCards(d){
-  const tiers = d.bots || {};
-  const grid = $('tierCards');
-  if (grid.dataset.built !== '1'){
-    grid.innerHTML = DISPLAY_ORDER.map(k =>
-      `<button class="tcard" id="tcard-${k}" data-tier="${k}"></button>`).join('');
-    DISPLAY_ORDER.forEach(k => $('tcard-'+k).addEventListener('click', () => selectTier(k)));
-    grid.dataset.built = '1';
+/* ---------------- 리더보드 ---------------- */
+function renderBoard(d){
+  const rows = (d.leaderboard || []);
+  const agg = d.aggregate || {};
+  $('boardMeta').textContent = `10개 독립 계좌 · 통합 ${won(agg.equity)}원 (${pct(agg.ret_pct)}) · ` +
+    `보유 ${agg.active_positions||0}계좌 · 총 ${agg.total_trades||0}전 ${agg.wins||0}승 ${agg.losses||0}패`;
+  $('boardUpdated').textContent = '갱신 ' + (d.last_checked_time||'—').slice(11);
+  if (!rows.length){
+    $('boardBody').innerHTML = `<tr><td colspan="9" class="neu" style="padding:14px">집계 대기 중…</td></tr>`;
+    return;
   }
-  DISPLAY_ORDER.forEach(k => {
-    const t = tiers[k] || {};
-    const btn = $('tcard-'+k);
-    if (!btn) return;
-    const ret = Number(t.current_ret_pct||0);
-    const tr = t.total_trades||0, w = t.wins||0;
-    const wr = tr ? (w/tr*100).toFixed(0) + '%' : '—';
-    btn.className = 'tcard' + (selTier === k ? ' sel' : '') + (t.position ? ' hold' : '');
-    btn.innerHTML = `
-      <div class="thead">
-        <span class="tlabel">${esc(t.label||k)}</span>
-        <span class="tpill ${TIER_PILL[k]}">${esc((t.style||'').split('·')[0].trim())}</span>
-      </div>
-      <div class="tth">${esc(t.style||'')} · 15초 ${money(t.min_short_krw)}↑</div>
-      <div class="teq mono">${won(t.current_equity)}원</div>
-      <div class="tret mono ${cls(ret)}">${pct(ret)}</div>
-      <div class="tstat" data-tstat="${k}">${tierStatusText(t)}<br>승률 ${wr} · ${w}승 ${t.losses||0}패 (${tr}전)</div>`;
+  const maxAbs = Math.max(1, ...rows.map(r => Math.abs(Number(r.ret_pct)||0)));
+  $('boardBody').innerHTML = rows.map(r => {
+    const st = (d.strategies || {})[r.key] || {};
+    const ret = Number(r.ret_pct||0);
+    const width = Math.min(100, Math.abs(ret)/maxAbs*100);
+    const barColor = ret >= 0 ? 'linear-gradient(90deg,#0ea5e9,#34d399)' : 'linear-gradient(90deg,#7f1d3a,#fb7185)';
+    const medal = medals[r.rank-1] || '';
+    const kindPill = r.carried_over ? '<span class="pill p-legacy">승계</span>' : '<span class="pill p-new">신규</span>';
+    return `<tr data-key="${r.key}" class="${selKey===r.key?'sel':''}">
+      <td class="rk ${r.rank<=3?'rk'+r.rank:''}">${medal || r.rank}</td>
+      <td>
+        <div class="stratcell">
+          <div><span class="sname">${esc(r.name||r.label)}</span> ${kindPill}</div>
+          <div class="skey">${esc(r.key)} · ${esc(r.style||'')}</div>
+          <div class="retbar"><i style="width:${width.toFixed(1)}%;background:${barColor};${ret<0?'right:0;left:auto;':''}"></i></div>
+        </div>
+      </td>
+      <td class="mono" style="text-align:right">${won(r.equity)}</td>
+      <td class="mono ${cls(ret)}" style="text-align:right;font-weight:800">${pct(ret)}</td>
+      <td class="mono ${cls(r.realized_pnl)} lib" style="text-align:right">${won(r.realized_pnl)}</td>
+      <td class="mono" style="text-align:right">${r.trades ? (r.win_rate_pct||0).toFixed(1)+'%' : '—'}</td>
+      <td class="mono neu lib" style="text-align:right">${r.wins||0}승 ${r.losses||0}패 (${r.trades||0})</td>
+      <td>${statusPill(st)}</td>
+      <td class="neu lib" style="font-size:10.5px;white-space:normal;max-width:250px">${esc((r.last_event||'').slice(0,80))}</td>
+    </tr>`;
+  }).join('');
+}
+
+/* ---------------- 전략 카드 ---------------- */
+function renderCards(d){
+  const rows = (d.leaderboard || []);
+  const grid = $('stratCards');
+  const keys = rows.map(r => r.key);
+  if (grid.dataset.order !== keys.join(',')){
+    grid.innerHTML = keys.map(k => `<button class="sc" id="sc-${k}" data-key="${k}"></button>`).join('');
+    grid.dataset.order = keys.join(',');
+  }
+  rows.forEach(r => {
+    const st = (d.strategies || {})[r.key] || {};
+    const el = $('sc-'+r.key);
+    if (!el) return;
+    const ret = Number(r.ret_pct||0);
+    const tr = r.trades||0;
+    el.className = 'sc' + (selKey===r.key?' sel':'') + (st.position?' hold':'');
+    el.innerHTML = `
+      <div class="scrank">${medals[r.rank-1] || ''} ${r.rank}위 ${r.carried_over?'· 승계':''}</div>
+      <div class="scname">${esc(r.name||r.label)}</div>
+      <div class="sclabel">${esc(r.key)}</div>
+      <div class="sceq mono">${won(r.equity)}</div>
+      <div class="scret mono ${cls(ret)}">${pct(ret)}</div>
+      <div class="scstat">${statusPill(st)}<br>승률 ${tr?(r.win_rate_pct||0).toFixed(0)+'%':'—'} · ${r.wins||0}승 ${r.losses||0}패</div>`;
   });
 }
 
-function renderAggStrip(d){
+/* ---------------- 통합 지표 ---------------- */
+function renderAgg(d){
   const a = d.aggregate || {};
   const ret = Number(a.ret_pct||0);
   const tr = a.total_trades||0, w = a.wins||0;
   const wr = tr ? (w/tr*100).toFixed(1) + '%' : '—';
+  const board = d.leaderboard || [];
+  const lead = board[0], lag = board[board.length-1];
   $('aggStrip').innerHTML = `
-    <span>통합 평가자산 <b class="mono">${won(a.equity)}원</b> <span style="font-size:10.5px">/ 시드 ${won(a.initial_capital)}원</span></span>
-    <span class="sep"></span>
-    <span>통합 수익률 <b class="mono ${cls(ret)}">${pct(ret)}</b></span>
-    <span class="sep"></span>
-    <span>실현손익 <b class="mono ${cls(a.realized_pnl)}">${won(Math.round(a.realized_pnl||0))}원</b></span>
-    <span class="sep"></span>
-    <span>총 전적 <b class="mono">${tr}전 ${w}승 ${a.losses||0}패</b> (승률 ${wr})</span>
-    <span class="sep"></span>
-    <span>보유 포지션 <b class="mono">${a.active_positions||0}/3</b></span>`;
+    <div style="display:flex;flex-wrap:wrap;gap:8px 20px;align-items:center;font-size:11.5px;color:var(--dim2)">
+      <span>통합 평가자산 <b class="mono" style="color:var(--txt);font-size:13px">${won(a.equity)}원</b>
+        <span style="font-size:10px">/ 시드 ${won(a.initial_capital)}원</span></span>
+      <span style="width:1px;height:14px;background:#1e2a3f"></span>
+      <span>통합 수익률 <b class="mono ${cls(ret)}" style="font-size:13px">${pct(ret)}</b></span>
+      <span style="width:1px;height:14px;background:#1e2a3f"></span>
+      <span>실현손익 <b class="mono ${cls(a.realized_pnl)}" style="color:var(--txt);font-size:12px">${won(Math.round(a.realized_pnl||0))}원</b></span>
+      <span style="width:1px;height:14px;background:#1e2a3f"></span>
+      <span>총 전적 <b style="color:var(--txt);font-size:12px">${tr}전 ${w}승 ${a.losses||0}패</b> (승률 ${wr})</span>
+      <span style="width:1px;height:14px;background:#1e2a3f"></span>
+      <span>보유 <b style="color:var(--txt);font-size:12px">${a.active_positions||0}/10</b></span>
+      <span style="width:1px;height:14px;background:#1e2a3f"></span>
+      <span>1위 <b style="color:var(--green);font-size:12px">${lead?esc(lead.name||lead.label):'—'}</b>
+        ${lead?`<span class="mono ${cls(lead.ret_pct)}">${pct(lead.ret_pct)}</span>`:''}
+        · 최하위 <b style="color:var(--red);font-size:12px">${lag?esc(lag.name||lag.label):'—'}</b>
+        ${lag?`<span class="mono ${cls(lag.ret_pct)}">${pct(lag.ret_pct)}</span>`:''}</span>
+    </div>`;
 }
 
-function posCard(t){
-  const p = t.position;
+/* ---------------- 상세 패널 ---------------- */
+function posCard(st){
+  const p = st.position;
   const entry = Number(p.entry_price), high = Number(p.highest_price||entry);
   const cur = Number(p.last_price||p.entry_price);
   const gain = (cur-entry)/entry*100;
   const pnlv = (cur-entry)*Number(p.coin_qty||0);
-  const lo = -1.8, hi = 2.5;
+  const prm = st.params || {};
+  const lo = Number(prm.stop_pct||-1.5), hi = Number(prm.target_pct||2.0);
   const pos01 = Math.max(0, Math.min(100, ((gain - lo) / (hi - lo)) * 100));
+  const trail = prm.trail_activation_pct
+    ? `+${prm.trail_activation_pct}% 후 고점 -${prm.trail_drop_pct}%` : '미사용';
   return `<div class="poscard">
     <div class="poshead">
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <span class="tag">HOLDING</span>
-        <span class="tbadge">${esc(t.label)}</span>
-        <strong style="font-size:15px">${esc(p.name||p.market)}</strong>
+        <strong style="font-size:14.5px">${esc(p.name||p.market)}</strong>
         <span class="mono small">${esc(p.market)}</span>
+        ${p.signal?`<span class="small" style="color:#8fd4f0">${esc(p.signal)}</span>`:''}
       </div>
-      <div class="mono ${cls(gain)}" style="font-size:18px;font-weight:800">${pct(gain)}</div>
+      <div class="mono ${cls(gain)}" style="font-size:17px;font-weight:800">${pct(gain)}</div>
     </div>
     <div class="posgrid">
       <div class="kv"><div class="k">진입가</div><div class="v mono">${priceFmt(entry)}</div></div>
       <div class="kv"><div class="k">현재가</div><div class="v mono">${priceFmt(cur)}</div></div>
       <div class="kv"><div class="k">최고가</div><div class="v mono" style="color:var(--amber)">${priceFmt(high)}</div></div>
       <div class="kv"><div class="k">보유 시간</div><div class="v mono">${holdMin(p.entry_time)}</div></div>
-      <div class="kv"><div class="k">목표 익절 (+2.5%)</div><div class="v mono" style="color:var(--green)">${priceFmt(entry*1.025)}</div></div>
-      <div class="kv"><div class="k">손절 (-1.8%)</div><div class="v mono" style="color:var(--red)">${priceFmt(entry*0.982)}</div></div>
-      <div class="kv"><div class="k">진입 근거</div><div class="v mono" style="font-size:11.5px">${esc(p.surge_ratio ? `${p.surge_ratio}배 · 매수 ${Math.round((p.bid_ratio||0)*100)}%` : '—')}</div></div>
+      <div class="kv"><div class="k">목표 (+${hi}%)</div><div class="v mono" style="color:var(--green)">${priceFmt(entry*(1+hi/100))}</div></div>
+      <div class="kv"><div class="k">손절 (${lo}%)</div><div class="v mono" style="color:var(--red)">${priceFmt(entry*(1+lo/100))}</div></div>
+      <div class="kv"><div class="k">트레일링</div><div class="v mono" style="font-size:10.5px">${trail}</div></div>
       <div class="kv"><div class="k">평가 손익</div><div class="v mono ${cls(pnlv)}">${won(Math.round(pnlv))}원</div></div>
     </div>
     <div class="bar"><i style="width:${pos01.toFixed(1)}%"></i></div>
-    <div class="small" style="margin-top:6px">현재 ${pct(gain)} · 고점 ${pct((high-entry)/entry*100)} · 손절 ${pct(lo)} ~ 목표 ${pct(hi)}</div>
+    <div class="small" style="margin-top:5px">현재 ${pct(gain)} · 고점 ${pct((high-entry)/entry*100)} · 손절 ${pct(lo)} ~ 목표 ${pct(hi)}</div>
   </div>`;
 }
 
-function renderPositions(d){
-  const tiers = d.bots || {};
-  const keys = selTier === 'all' ? DISPLAY_ORDER : [selTier];
-  const cards = keys.map(k => tiers[k]).filter(t => t && t.position).map(posCard);
-  $('posCards').innerHTML = cards.join('');
+function stratTrades(list){
+  list = (list || []).slice().reverse();
+  if (!list.length) return `<div class="small" style="padding:8px 2px">이 전략은 아직 체결 기록이 없습니다.</div>`;
+  return `<div class="scroll" style="max-height:240px"><table>
+    <thead><tr><th>구분</th><th>종목</th><th>시각</th><th style="text-align:right">가격</th><th style="text-align:right">손익%</th><th style="text-align:right">손익(원)</th><th>사유</th></tr></thead>
+    <tbody>${list.map(t => {
+      const isBuy = t.type === 'BUY';
+      return `<tr style="cursor:default">
+        <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
+        <td><b>${esc(t.name)}</b></td>
+        <td class="mono neu" style="font-size:10px">${esc((t.exit_time||t.entry_time||'').slice(5))}</td>
+        <td class="mono" style="text-align:right">${isBuy?priceFmt(t.entry_price):priceFmt(t.exit_price)}</td>
+        <td class="mono ${cls(t.gain_pct)}" style="text-align:right">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
+        <td class="mono ${cls(t.pnl_krw)}" style="text-align:right">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
+        <td class="neu" style="font-size:10px;white-space:normal;max-width:260px">${esc(t.reason||'')}</td>
+      </tr>`;
+    }).join('')}</tbody></table></div>`;
 }
 
 function renderDetail(d){
-  const tiers = d.bots || {};
-  if (selTier === 'all'){
+  const panel = $('detailPanel');
+  const board = d.leaderboard || [];
+  if (selKey === 'all' || !board.length){
     const a = d.aggregate || {};
-    $('lblEquity').textContent = '통합 평가 자산';
-    $('equity').textContent = won(a.equity) + '원';
-    $('seed').textContent = '3계좌 시드 ' + won(a.initial_capital) + '원';
-    $('ret').textContent = pct(a.ret_pct);
-    $('ret').className = 'v mono ' + cls(a.ret_pct);
-    $('pnl').textContent = '실현 ' + won(Math.round(a.realized_pnl||0)) + '원';
-    const holding = DISPLAY_ORDER.map(k => tiers[k]).filter(t => t && t.position).length;
-    const cooling = DISPLAY_ORDER.map(k => tiers[k]).filter(t => t && !t.position && cooldownLeft(t.cooldown_until)).length;
-    $('status').textContent = holding ? `보유 ${holding}계좌` : (cooling ? `쿨다운 ${cooling}계좌` : '전 계좌 대기');
-    $('status').style.color = holding ? 'var(--cyan)' : (cooling ? 'var(--amber)' : 'var(--violet)');
-    $('cash').textContent = '현금 ' + won(Math.round(d.cash_krw||0)) + '원';
-    const tr = a.total_trades||0, w = a.wins||0;
-    $('record').textContent = tr ? ((w/tr*100).toFixed(1) + '%') : '—';
-    $('counts').textContent = `${w}승 ${a.losses||0}패 (총 ${tr}회)`;
-  } else {
-    const t = tiers[selTier] || {};
-    const ret = Number(t.current_ret_pct||0);
-    $('lblEquity').textContent = `${t.label||selTier} 계좌 평가자산`;
-    $('equity').textContent = won(t.current_equity) + '원';
-    $('seed').textContent = '시드 ' + won(t.initial_capital) + '원 · 문턱 15초 ' + money(t.min_short_krw) + '↑';
-    $('ret').textContent = pct(ret);
-    $('ret').className = 'v mono ' + cls(ret);
-    $('pnl').textContent = '실현 ' + won(Math.round(t.total_realized_pnl||0)) + '원 · MDD ' + (t.max_drawdown_pct||0).toFixed(2) + '%';
-    $('status').innerHTML = tierStatusText(t);
-    $('status').style.color = '';
-    $('cash').textContent = t.position ? '현금 0원 (전액 투입)' : '현금 ' + won(Math.round(t.cash_krw||0)) + '원';
-    const tr = t.total_trades||0, w = t.wins||0;
-    $('record').textContent = tr ? ((w/tr*100).toFixed(1) + '%') : '—';
-    $('counts').textContent = `${w}승 ${t.losses||0}패 (총 ${tr}회)`;
+    panel.innerHTML = `<div class="detail">
+      <div class="dhead">
+        <div>
+          <div class="dname">10전략 통합</div>
+          <div class="dsub">전략 카드나 순위표 행을 누르면 그 전략의 포지션·규칙·매매내역이 여기에 표시됩니다.</div>
+        </div>
+        <div style="text-align:right"><div class="dret mono ${cls(a.ret_pct)}">${pct(a.ret_pct)}</div>
+          <div class="small">${won(a.equity)}원 / 시드 ${won(a.initial_capital)}원</div></div>
+      </div>
+      <div class="grid g4">
+        <div class="kv"><div class="k">통합 실현손익</div><div class="v mono ${cls(a.realized_pnl)}">${won(Math.round(a.realized_pnl||0))}원</div></div>
+        <div class="kv"><div class="k">총 전적</div><div class="v mono">${a.total_trades||0}전 ${a.wins||0}승 ${a.losses||0}패</div></div>
+        <div class="kv"><div class="k">가동 전략</div><div class="v mono">${board.length}/10</div></div>
+        <div class="kv"><div class="k">현재 보유</div><div class="v mono">${a.active_positions||0}계좌</div></div>
+      </div>
+      <div class="small" style="margin-top:9px">전략별 진입·청산 규칙은 아래 「10전략 규칙표」에서 한눈에 비교할 수 있습니다.</div>
+    </div>`;
+    return;
   }
+  const r = board.find(x => x.key === selKey) || board[0];
+  const st = (d.strategies || {})[r.key] || {};
+  const prm = st.params || {};
+  const ret = Number(r.ret_pct||0);
+  const tr = r.trades||0;
+  panel.innerHTML = `<div class="detail">
+    <div class="dhead">
+      <div>
+        <div class="dname">${medals[r.rank-1]||''} ${r.rank}위 · ${esc(r.name||r.label)}
+          ${r.carried_over?'<span class="pill p-legacy" style="margin-left:4px">v3.1 승계</span>':'<span class="pill p-new" style="margin-left:4px">v4.0 신규</span>'}</div>
+        <div class="dsub">${esc(r.key)} · ${esc(r.style||'')} · 시드 ${won(st.initial_capital)}원 · 현금 ${won(Math.round(st.cash_krw||0))}원</div>
+      </div>
+      <div style="text-align:right">
+        <div class="dret mono ${cls(ret)}">${pct(ret)}</div>
+        <div class="small">${won(r.equity)}원 · 실현 ${won(r.realized_pnl)}원</div>
+      </div>
+    </div>
+    <div class="grid g4" style="margin-bottom:9px">
+      <div class="kv"><div class="k">승률</div><div class="v mono">${tr?(r.win_rate_pct||0).toFixed(1)+'%':'—'}</div></div>
+      <div class="kv"><div class="k">전적</div><div class="v mono">${r.wins||0}승 ${r.losses||0}패 (${tr}전)</div></div>
+      <div class="kv"><div class="k">최대 낙폭(MDD)</div><div class="v mono down">-${(st.max_drawdown_pct||0).toFixed(2)}%</div></div>
+      <div class="kv"><div class="k">현재 상태</div><div class="v">${statusPill(st)}</div></div>
+    </div>
+    <div class="grid g2" style="margin-bottom:9px">
+      <div class="rulebox"><b>진입</b><br>${esc(st.entry || r.last_event || '')}</div>
+      <div class="rulebox"><b class="rk2">청산</b><br>${esc(st.exit || '')}
+        ${prm.max_hold_min?`<span class="small"> · 최대 보유 ${prm.max_hold_min}분 · 손절 쿨다운 ${prm.cooldown_min||5}분</span>`:''}</div>
+    </div>
+    <div class="small" style="margin-bottom:6px">
+      <b style="color:#c7d3e6">최근 상태</b> · ${esc(st.last_event||'—')}
+      ${st.watch?` <span class="neu">(근접 후보 ${esc(st.watch.name)} · 15초 ${money(st.watch.short_krw)} · ${(st.watch.surge_ratio||0).toFixed(1)}배)</span>`:''}
+    </div>
+    ${st.position ? posCard(st) : ''}
+    <div style="font-size:11px;font-weight:800;color:#c3d0e4;margin:8px 0 5px">📜 ${esc(r.name||r.label)} 매매내역</div>
+    ${stratTrades((d.recent_trades||[]).filter(t => t.strategy === r.key))}
+  </div>`;
 }
 
-function renderCooldowns(d){
-  const tiers = d.bots || {};
-  $('coolGrid').innerHTML = DISPLAY_ORDER.map(k => {
-    const t = tiers[k] || {};
-    const ms = cooldownLeft(t.cooldown_until);
-    let v, color, s;
-    if (ms){ v = '쿨다운 ' + cdText(ms); color = 'var(--amber)'; s = '종료 ' + (t.cooldown_until||'').slice(11); }
-    else if (t.position){ v = '포지션 보유'; color = 'var(--cyan)'; s = '쿨다운 없음'; }
-    else { v = '없음'; color = 'var(--green)'; s = '손절 시 5분'; }
-    return `<div class="card"><div class="k">${esc(t.label||k)} 손절 쿨다운</div>
-      <div class="v mono" style="font-size:14px;color:${color}">${v}</div><div class="s">${s}</div></div>`;
-  }).join('');
-}
-
-function renderScan(d){
-  const scan = d.live_scan || {top:[], scanned:0, qualified:0};
-  const rows = (scan.top||[]).map(m => {
-    const qt = m.qualified_tiers || [];
-    const badge = qt.length
-      ? qt.map(k => `<span class="pill ${TIER_PILL_CLASS[k]||'p-buy'}" style="margin-right:3px">${(d.bots&&d.bots[k]?d.bots[k].label:k)}</span>`).join('')
-      : `<span class="rej">${esc(m.reject)}</span>`;
-    return `<tr>
-      <td><b>${esc(m.name)}</b> <span class="neu mono" style="font-size:10px">${esc(m.market)}</span></td>
-      <td class="mono">${priceFmt(m.price)}</td>
-      <td class="mono">${money(m.short_krw)}원</td>
-      <td class="mono">${(m.surge_ratio||0).toFixed(1)}배</td>
-      <td class="mono ${m.bid_ratio>=0.7?'up':''}">${Math.round((m.bid_ratio||0)*100)}%</td>
-      <td class="mono ${cls(m.chg_3m_pct)}">${pct(m.chg_3m_pct)}</td>
-      <td>${badge}</td>
-    </tr>`;
-  }).join('');
-  $('scanBody').innerHTML = rows || `<tr><td colspan="7" class="neu" style="padding:14px">틱 데이터 수집 중…</td></tr>`;
-  const qbt = scan.qualified_by_tier || {};
-  $('scanSummary').textContent = `감시 ${scan.scanned||0}종목 · 진입 조건 충족 ` +
-    DISPLAY_ORDER.map(k => `${(d.bots&&d.bots[k]?d.bots[k].label:k)} ${qbt[k]||0}`).join(' / ') +
-    ` · 판단 주기 ${(d.rules&&d.rules.tick_interval_sec)||1.5}초`;
-}
-
-function renderTrades(d){
-  const all = (d.recent_trades||[]).slice().reverse();
-  const filtered = selTier === 'all' ? all : all.filter(t => t.tier === selTier);
-  $('tradeFilterLabel').textContent = selTier === 'all' ? '— 3계좌 통합' : '— ' + ((d.bots&&d.bots[selTier]&&d.bots[selTier].label) || selTier) + ' 계좌';
-  $('tradeBody').innerHTML = filtered.length ? filtered.map(t => {
-    const isBuy = t.type === 'BUY';
-    const label = t.tier_label || (d.bots&&d.bots[t.tier]?d.bots[t.tier].label:t.tier) || '—';
-    return `<tr>
-      <td><span class="pill ${TIER_PILL_CLASS[t.tier]||'p-buy'}">${esc(label)}</span></td>
-      <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
-      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:10px">${esc(t.market)}</span></td>
-      <td class="mono neu" style="font-size:11px">${esc((t.entry_time||'').slice(5))}</td>
-      <td class="mono neu" style="font-size:11px">${esc((t.exit_time||'—').slice(5))}</td>
-      <td class="mono">${priceFmt(t.entry_price)}</td>
-      <td class="mono">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
-      <td class="mono ${cls(t.gain_pct)}">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
-      <td class="mono ${cls(t.pnl_krw)}">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
-      <td class="neu" style="font-size:11px;white-space:normal;max-width:240px">${esc(t.reason||'')}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="10" class="neu" style="padding:14px">${selTier==='all' ? '3계좌 × 200만 원 신규 시드로 0전 0승 0패 시작' : '이 계좌는 아직 체결 없음 (0전 0승 0패)'}</td></tr>`;
-}
-
-function renderStatus(d){
-  lastData = d;
-  $('lastChecked').textContent = d.last_checked_time || '—';
-
-  renderTierCards(d);
-  renderAggStrip(d);
-  renderDetail(d);
-  renderPositions(d);
-  renderCooldowns(d);
-  renderScan(d);
-  renderTrades(d);
-
-  // ws
+/* ---------------- 수신/필터/감시 ---------------- */
+function renderInfra(d){
   const ws = d.ws || {};
   const conn = ws.ws_connected;
   $('wsConn').textContent = conn ? '연결됨' : '끊김';
   $('wsConn').style.color = conn ? 'var(--green)' : 'var(--red)';
   $('wsConnAt').textContent = ws.ws_connected_at ? ('since ' + ws.ws_connected_at.slice(11)) : (ws.ws_last_error || '—');
   $('wsMarkets').textContent = (ws.ws_markets_count||0) + '개';
-  $('wsTps').textContent = (ws.ws_ticks_per_sec||0).toFixed(1);
-  $('wsTotal').textContent = '누적 ' + won(ws.ws_ticks_total||0) + '틱';
-  $('wsAge').textContent = ws.ws_message_age_sec!=null ? ws.ws_message_age_sec.toFixed(1) + '초 전' : '—';
-  $('wsRecon').textContent = '재연결 ' + (ws.ws_reconnects||0) + '회';
+  $('wsTps').textContent = `${(ws.ws_ticks_per_sec||0).toFixed(1)}틱/초 · 누적 ${won(ws.ws_ticks_total||0)} · 재연결 ${ws.ws_reconnects||0}회`;
   const wsBadge = $('wsBadge');
   wsBadge.className = 'badge ' + (conn ? 'b-live' : 'b-off');
   wsBadge.innerHTML = `<span class="dot ${conn?'on':'off'}"></span>` + (conn
       ? `WS LIVE · ${ws.ws_markets_count||0}마켓 · ${(ws.ws_ticks_per_sec||0).toFixed(1)}틱/초`
       : 'WS 끊김 · 재연결 중');
 
-  // btc / gist
+  const c = d.candles || {};
+  $('candles').textContent = `${c.markets_cached||0}/${c.markets_target||15}종목`;
+  $('candleDetail').textContent = c.sample
+    ? `${c.sample.market} RSI ${(c.sample.rsi==null?'—':c.sample.rsi)} · ${c.refresh_sec||60}s 주기 · 오류 ${c.errors||0}`
+    : `60초 주기 · 요청 ${c.requests||0} · 오류 ${c.errors||0}`;
+
   const btc = d.btc_trend || {};
+  const btcBadge = $('btcBadge');
   if (btc.trend){
     const bear = btc.is_bearish;
-    $('btcTrend').textContent = bear ? '하락 (3계좌 진입 차단)' : (btc.trend === 'BULLISH' ? '상승 (진입 허용)' : '중립 (진입 허용)');
+    $('btcTrend').textContent = bear ? '하락 · 전 전략 차단' : (btc.trend === 'BULLISH' ? '상승 · 진입 허용' : '중립 · 진입 허용');
     $('btcTrend').style.color = bear ? 'var(--red)' : 'var(--green)';
-    $('btcDetail').textContent = `BTC ${won(btc.btc_price)}원 · 20이평 대비 ${pct(btc.diff_pct)}`;
+    $('btcDetail').textContent = `BTC ${won(btc.btc_price)}원 · 20이평 ${pct(btc.diff_pct)}`;
+    btcBadge.className = 'badge ' + (bear ? 'b-off' : 'b-live');
+    btcBadge.textContent = bear ? `BTC -${Math.abs(btc.diff_pct).toFixed(2)}% · 진입 차단` : `BTC ${pct(btc.diff_pct)} · 진입 허용`;
   }
   const p = d.persistence || {};
   $('gist').textContent = p.gist_enabled ? (p.gist_last_sync_ok === false ? '동기화 오류' : '동기화 중') : '비활성';
   $('gist').style.color = p.gist_last_sync_ok === false ? 'var(--red)' : 'var(--green)';
   $('gistDetail').textContent = p.gist_enabled
-      ? `마지막 ${p.gist_last_sync_at ? p.gist_last_sync_at.slice(11) : '—'} · ${p.gist_pending ? '저장 대기' : '저장됨'}`
-      : 'GIST_TOKEN 미설정';
+    ? `마지막 ${p.gist_last_sync_at ? p.gist_last_sync_at.slice(11) : '—'} · ${p.gist_pending?'저장 대기':'저장됨'} · source ${p.load_source||'—'}`
+    : 'GIST_TOKEN 미설정';
+}
+
+function renderScan(d){
+  const scan = d.live_scan || {top:[], scanned:0, qualified:0};
+  const names = {};
+  ((d.leaderboard)||[]).forEach(r => names[r.key] = r.label);
+  const rows = (scan.top||[]).map(m => {
+    const qs = m.qualified_strategies || [];
+    const badge = qs.length
+      ? qs.map(k => `<span class="pill ${['3m','10m','30m'].includes(k)?'p-legacy':'p-new'}" style="margin:0 3px 2px 0">${esc(names[k]||k)}</span>`).join('')
+      : `<span class="neu" style="font-size:10px">—</span>`;
+    return `<tr style="cursor:default">
+      <td><b>${esc(m.name)}</b> <span class="neu mono" style="font-size:9.5px">${esc(m.market)}</span></td>
+      <td class="mono" style="text-align:right">${priceFmt(m.price)}</td>
+      <td class="mono" style="text-align:right">${money(m.short_krw)}원</td>
+      <td class="mono" style="text-align:right">${(m.surge_ratio||0).toFixed(1)}배</td>
+      <td class="mono ${m.bid_ratio>=0.65?'up':''}" style="text-align:right">${Math.round((m.bid_ratio||0)*100)}%</td>
+      <td class="mono ${cls(m.chg_3m_pct)}" style="text-align:right">${pct(m.chg_3m_pct)}</td>
+      <td class="mono neu lib" style="text-align:right">${m.drawdown_from_high_pct!=null?pct(m.drawdown_from_high_pct):'—'}</td>
+      <td style="white-space:normal">${badge}</td>
+    </tr>`;
+  }).join('');
+  $('scanBody').innerHTML = rows || `<tr><td colspan="8" class="neu" style="padding:14px">틱 데이터 수집 중…</td></tr>`;
+  $('scanSummary').textContent = `감시 ${scan.scanned||0}종목 · 이 순간 신호 발생 ${scan.qualified||0}종목 · ` +
+    `판단 주기 ${(d.rules&&d.rules.tick_interval_sec)||1.5}초 · ` +
+    `TOP10 ${(scan.top_markets||[]).length}종목 (대형주 스캘핑 대상)`;
+}
+
+function renderRules(d){
+  const meta = d.strategy_meta || (d.rules && d.rules.strategies) || {};
+  const order = d.strategy_order || Object.keys(meta);
+  $('rulesBody').innerHTML = order.map(k => {
+    const m = meta[k] || {};
+    return `<tr style="cursor:pointer" data-key="${k}" class="${selKey===k?'sel':''}">
+      <td><b>${esc(m.name||k)}</b><div class="skey">${esc(k)} ${m.carried_over?'· 승계':''}</div></td>
+      <td class="neu" style="font-size:10.5px">${esc(m.style||'')}</td>
+      <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.entry||'')}</td>
+      <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.exit||'')}</td>
+    </tr>`;
+  }).join('');
+}
+
+function renderTrades(d){
+  const all = (d.recent_trades||[]).slice().reverse();
+  const filtered = selKey === 'all' ? all : all.filter(t => t.strategy === selKey);
+  $('tradeFilterLabel').textContent = selKey === 'all' ? '— 10전략 통합' : '— ' + (((d.strategy_meta||{})[selKey]||{}).name || selKey);
+  $('tradeBody').innerHTML = filtered.length ? filtered.map(t => {
+    const isBuy = t.type === 'BUY';
+    const legacy = ['3m','10m','30m'].includes(t.strategy);
+    return `<tr style="cursor:default">
+      <td><span class="pill ${legacy?'p-legacy':'p-new'}">${esc(t.strategy_label || t.strategy || '—')}</span></td>
+      <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
+      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:9.5px">${esc(t.market)}</span></td>
+      <td class="mono neu" style="font-size:10px">${esc((t.entry_time||'').slice(5))}</td>
+      <td class="mono neu" style="font-size:10px">${esc((t.exit_time||'—').slice(5))}</td>
+      <td class="mono" style="text-align:right">${priceFmt(t.entry_price)}</td>
+      <td class="mono" style="text-align:right">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
+      <td class="mono ${cls(t.gain_pct)}" style="text-align:right">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
+      <td class="mono ${cls(t.pnl_krw)}" style="text-align:right">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
+      <td class="neu" style="font-size:10px;white-space:normal;max-width:250px">${esc(t.reason||'')}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="10" class="neu" style="padding:14px">${selKey==='all' ? '10전략 × 200만 원으로 리그를 시작했습니다 (승계 3계좌 기록 포함)' : '이 전략은 아직 체결 기록이 없습니다'}</td></tr>`;
+}
+
+function renderStatus(d){
+  lastData = d;
+  $('lastChecked').textContent = d.last_checked_time || '—';
+  renderAgg(d);
+  renderBoard(d);
+  renderCards(d);
+  renderDetail(d);
+  renderInfra(d);
+  renderScan(d);
+  renderRules(d);
+  renderTrades(d);
 }
 
 async function tick(){
@@ -591,47 +711,42 @@ function renderArchive(v, a){
       dur = h >= 24 ? (h/24).toFixed(1) + '일' : h.toFixed(1) + '시간';
     }
   }
-  const stats = [
+  $(v+'Stats').innerHTML = [
     stat('최종 평가 자산', won(a.final_equity) + '원', '초기 ' + won(a.initial_capital) + '원'),
     stat('누적 수익률', pct(a.total_return_pct), '실현 ' + won(a.total_realized_pnl) + '원', a.total_return_pct>=0?'var(--green)':'var(--red)'),
     stat('전적', `${a.total_trades}전 ${a.wins}승 ${a.losses}패`, '승률 ' + (a.win_rate_pct||0) + '%'),
     stat('운용 기간', dur, period || '—')
   ].join('');
-  $(v+'Stats').innerHTML = stats;
   $(v+'Title').textContent = '📦 ' + (a.title || (v + '.0 아카이브'));
   $(v+'Period').textContent = a.operating_period || '';
-
   const rs = a.rules_summary || {};
   $(v+'Rules').innerHTML = Object.entries(rs).map(([k, val]) =>
-    `<tr><td style="width:110px;color:var(--dim)">${esc(k)}</td><td>${esc(val)}</td></tr>`).join('');
-
+    `<tr><td style="width:110px;color:var(--dim2)">${esc(k)}</td><td>${esc(val)}</td></tr>`).join('');
   const rows = (a.trades||[]).slice().reverse().map(t => {
     const isBuy = t.type === 'BUY';
-    return `<tr>
+    return `<tr style="cursor:default">
       <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
-      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:10px">${esc(t.market)}</span></td>
-      <td class="mono neu" style="font-size:11px">${esc((t.entry_time||'').slice(5))}</td>
-      <td class="mono neu" style="font-size:11px">${esc((t.exit_time||'—').slice(5))}</td>
-      <td class="mono">${priceFmt(t.entry_price)}</td>
-      <td class="mono">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
-      <td class="mono ${cls(t.gain_pct)}">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
-      <td class="mono ${cls(t.pnl_krw)}">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
-      <td class="neu" style="font-size:11px;white-space:normal;max-width:230px">${esc(t.reason||'')}</td>
+      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:9.5px">${esc(t.market)}</span></td>
+      <td class="mono neu" style="font-size:10px">${esc((t.entry_time||'').slice(5))}</td>
+      <td class="mono neu" style="font-size:10px">${esc((t.exit_time||'—').slice(5))}</td>
+      <td class="mono" style="text-align:right">${priceFmt(t.entry_price)}</td>
+      <td class="mono" style="text-align:right">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
+      <td class="mono ${cls(t.gain_pct)}" style="text-align:right">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
+      <td class="mono ${cls(t.pnl_krw)}" style="text-align:right">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
+      <td class="neu" style="font-size:10px;white-space:normal;max-width:230px">${esc(t.reason||'')}</td>
     </tr>`;
   }).join('');
   $(v+'Trades').innerHTML = rows || `<tr><td colspan="9" class="neu" style="padding:14px">기록 없음</td></tr>`;
-
   if (v === 'v2'){
     const op = a.open_position_at_archive;
-    $('v2OpenNote').innerHTML = op ? `<div class="note">아카이브 시점 미청산 포지션: <b>${esc(op.name)} (${esc(op.market)})</b> — ${esc(op.entry_time)} ${priceFmt(op.entry_price)}원 진입, 아카이브 시세 ${priceFmt(op.price_at_archive)}원(${pct(op.unrealized_pct)}). v3.0·v3.1은 신규 시드로 리셋되므로 이 포지션은 승계되지 않으며 v2.0 실현손익에도 포함되지 않습니다.</div>` : '';
+    $('v2OpenNote').innerHTML = op ? `<div class="note">아카이브 시점 미청산 포지션: <b>${esc(op.name)} (${esc(op.market)})</b> — ${esc(op.entry_time)} ${priceFmt(op.entry_price)}원 진입, 아카이브 시세 ${priceFmt(op.price_at_archive)}원(${pct(op.unrealized_pct)}). v3 이후 신규 시드로 리셋되어 이 포지션은 승계되지 않습니다.</div>` : '';
     $('v2Note').textContent = a.trade_log_note || '';
   }
 }
 
 tick();
-setInterval(tick, 2000);
-// 쿨다운 카운트다운 (1초 갱신)
-setInterval(() => { if (lastData) { renderTierCards(lastData); renderCooldowns(lastData); } }, 1000);
+setInterval(tick, 2500);
+setInterval(() => { if (lastData) { renderBoard(lastData); renderCards(lastData); } }, 1000);
 </script>
 </body>
 </html>

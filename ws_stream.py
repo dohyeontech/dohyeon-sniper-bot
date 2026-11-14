@@ -1,12 +1,14 @@
 """
-업비트 실시간 체결(trade) WebSocket 스트림 수신기 — v3.0 초단타 엔진용.
+업비트 실시간 체결(trade) WebSocket 스트림 수신기 — v4.0 10전략 리그용.
 
 - 업비트 KRW 마켓 중 유의종목 제외 + 24시간 거래대금 30억 이상 종목을 구독
-- 각 종목의 틱(체결)을 메모리에 최근 N초(기본 200초) 롤링 윈도우로 보관
+- 각 종목의 틱(체결)을 메모리에 최근 N초(기본 900초 = 15분) 롤링 윈도우로 보관
 - 네트워크 끊김 시 자동 재연결(백오프), 10분마다 종목 리스트 갱신을 위해 재구독
 - ask_bid 필드 실측 검증 결과: 'BID' = 매수 체결, 'ASK' = 매도 체결
 
-백그라운드 스레드에서 동작하며, 엔진은 market_metrics()/last_price()로 조회한다.
+백그라운드 스레드에서 동작하며, 엔진은 market_snapshot()/last_price()로 조회한다.
+market_snapshot()은 한 번의 순회로 15초·10초·3분·10분 창 지표(거래대금, BID 비율,
+가격 반등, 고점 대비 눌림, VWAP)를 모두 계산해 10개 전략이 같은 스냅샷을 공유한다.
 """
 
 import json
@@ -34,7 +36,7 @@ except Exception as _e:  # pragma: no cover - 라이브러리 미설치 시
 
 WS_URL = "wss://api.upbit.com/websocket/v1"
 MAX_SUBSCRIBE_CODES = 180  # 업비트 웹소켓 1회 요청 최대 종목 수
-USER_AGENT = {"User-Agent": "Mozilla/5.0 (compatible; dohyeon-sniper-bot/3.0)"}
+USER_AGENT = {"User-Agent": "Mozilla/5.0 (compatible; dohyeon-sniper-bot/4.0)"}
 
 
 def _get_json(url, timeout=10):
@@ -70,7 +72,7 @@ def fetch_active_markets(min_24h_vol_krw=3_000_000_000):
 
 
 class UpbitTradeStream:
-    def __init__(self, min_24h_vol_krw=3_000_000_000, window_sec=200, market_refresh_sec=600):
+    def __init__(self, min_24h_vol_krw=3_000_000_000, window_sec=900, market_refresh_sec=600):
         self.min_vol = min_24h_vol_krw
         self.window_ms = int(window_sec * 1000)
         self.market_refresh_sec = market_refresh_sec
@@ -124,6 +126,11 @@ class UpbitTradeStream:
         with self._lock:
             return dict(self._names)
 
+    def top_markets(self, n=10):
+        """24h 거래대금 내림차순 상위 n종목 (구독 리스트는 갱신 시점 기준 정렬)."""
+        with self._lock:
+            return list(self._codes[:n])
+
     def _subscribed_codes(self):
         with self._lock:
             extra = set(self._extra)
@@ -171,7 +178,7 @@ class UpbitTradeStream:
 
     def _consume(self, codes):
         sub = [
-            {"ticket": f"sniper-v3-{int(time.time())}"},
+            {"ticket": f"sniper-v4-{int(time.time())}"},
             {"type": "trade", "codes": codes},
             {"format": "DEFAULT"},
         ]
@@ -240,31 +247,69 @@ class UpbitTradeStream:
                 return None
             return dq[-1][1]
 
-    def market_metrics(self, market, now_ms=None, short_sec=15, base_sec=180):
-        """최근 short_sec초 거래대금/매수체결비율과 직전 base_sec초 평균 15초 거래대금 비교 지표."""
+    def market_snapshot(self, market, now_ms=None, short_sec=15, base_sec=180,
+                        mid_sec=600, micro_sec=10):
+        """한 번의 틱 순회로 v4.0 10개 전략이 쓰는 모든 창 지표를 계산한다.
+
+        반환 필드:
+          · 15초 창: short_krw, short_bid_krw, bid_ratio
+          · 10초 창: krw_10s, bid_ratio_10s, ticks_10s
+          · 3분 창: base_krw, base_ticks, baseline_15s_krw, surge_ratio, chg_3m_pct,
+                    low_3m, vwap_3m(체결가 가중 평균)
+          · 10분 창: high_10m, coverage_10m_sec, drawdown_from_high_pct
+          · 가격 이력: price_15s_ago, price_30s_ago, chg_15s_pct
+        """
         now_ms = now_ms or int(time.time() * 1000)
-        short_start = now_ms - short_sec * 1000
-        base_start = now_ms - base_sec * 1000
         with self._lock:
             dq = self._ticks.get(market)
             rows = list(dq) if dq else None
         if not rows:
             return None
 
+        short_start = now_ms - short_sec * 1000
+        base_start = now_ms - base_sec * 1000
+        mid_start = now_ms - mid_sec * 1000
+        micro_start = now_ms - micro_sec * 1000
+        ago_15s = now_ms - short_sec * 1000
+        ago_30s = now_ms - 30_000
+
         short_krw = short_bid_krw = base_krw = 0.0
-        base_ticks = 0
-        earliest_ts = None
+        micro_krw = micro_bid_krw = 0.0
+        vwap_krw = vwap_vol = 0.0
+        base_ticks = micro_ticks = 0
+        earliest_ts = earliest_mid_ts = None
         last_ts = 0
-        first_price = None
-        last_price = None
+        first_price = last_price = None
+        price_15 = price_30 = None
+        high_10m = low_3m = None
+
         for ts, price, krw, is_bid in rows:
-            if ts < base_start or ts > now_ms + 5_000:
+            if ts > now_ms + 5_000:
                 continue
-            if ts <= last_ts:      # 순서 역전 틱 무시
+            if ts <= last_ts:      # 순서 역전/중복 틱 무시
                 continue
             last_ts = ts
+
+            if ts <= ago_30s:
+                price_30 = price
+            if ts <= ago_15s:
+                price_15 = price
+
+            if ts >= mid_start:
+                if earliest_mid_ts is None:
+                    earliest_mid_ts = ts
+                if high_10m is None or price > high_10m:
+                    high_10m = price
+            if ts < base_start:
+                continue
+
             if earliest_ts is None:
                 earliest_ts = ts
+            if low_3m is None or price < low_3m:
+                low_3m = price
+            if price > 0:
+                vwap_krw += krw
+                vwap_vol += krw / price
             if ts < short_start:
                 base_krw += krw
                 base_ticks += 1
@@ -276,6 +321,11 @@ class UpbitTradeStream:
                     short_bid_krw += krw
                 if first_price is None:
                     first_price = price
+                if ts >= micro_start:
+                    micro_krw += krw
+                    micro_ticks += 1
+                    if is_bid:
+                        micro_bid_krw += krw
             last_price = price
 
         if earliest_ts is None or last_price is None:
@@ -290,21 +340,46 @@ class UpbitTradeStream:
             surge_ratio = 999.0 if short_krw > 0 else 0.0
 
         chg_pct = ((last_price - first_price) / first_price * 100.0) if first_price else 0.0
+        chg_15s = ((last_price - price_15) / price_15 * 100.0) if price_15 else None
+        dd_high = ((last_price - high_10m) / high_10m * 100.0) if high_10m else None
+        cov_10m = min((now_ms - earliest_mid_ts) / 1000.0, mid_sec) if earliest_mid_ts else 0.0
+
         return {
             "market": market,
             "last_price": last_price,
             "short_krw": short_krw,
             "short_bid_krw": short_bid_krw,
             "bid_ratio": (short_bid_krw / short_krw) if short_krw > 0 else 0.0,
+            "krw_10s": micro_krw,
+            "bid_ratio_10s": (micro_bid_krw / micro_krw) if micro_krw > 0 else 0.0,
+            "ticks_10s": micro_ticks,
             "base_krw": base_krw,
             "base_ticks": base_ticks,
             "baseline_15s_krw": baseline15,
             "surge_ratio": surge_ratio,
             "chg_3m_pct": chg_pct,
+            "low_3m": low_3m,
+            "high_10m": high_10m,
+            "drawdown_from_high_pct": dd_high,
+            "vwap_3m": (vwap_krw / vwap_vol) if vwap_vol > 0 else None,
+            "price_15s_ago": price_15,
+            "price_30s_ago": price_30,
+            "chg_15s_pct": chg_15s,
             "coverage_sec": (now_ms - earliest_ts) / 1000.0,
+            "coverage_10m_sec": cov_10m,
             "ticks_in_window": len(rows),
             "last_tick_age_sec": (now_ms - last_ts) / 1000.0,
         }
+
+    def market_metrics(self, market, now_ms=None, short_sec=15, base_sec=180):
+        """v3.x 호환 래퍼 — market_snapshot()의 부분 집합을 돌려준다."""
+        snap = self.market_snapshot(market, now_ms, short_sec, base_sec)
+        if not snap:
+            return None
+        keys = ("market", "last_price", "short_krw", "short_bid_krw", "bid_ratio",
+                "base_krw", "base_ticks", "baseline_15s_krw", "surge_ratio",
+                "chg_3m_pct", "coverage_sec", "ticks_in_window", "last_tick_age_sec")
+        return {k: snap[k] for k in keys}
 
     def stats(self):
         now = time.time()
