@@ -331,14 +331,22 @@ function tierStatusText(t){
 
 function renderTierCards(d){
   const tiers = d.bots || {};
-  $('tierCards').innerHTML = DISPLAY_ORDER.map(k => {
+  const grid = $('tierCards');
+  if (grid.dataset.built !== '1'){
+    grid.innerHTML = DISPLAY_ORDER.map(k =>
+      `<button class="tcard" id="tcard-${k}" data-tier="${k}"></button>`).join('');
+    DISPLAY_ORDER.forEach(k => $('tcard-'+k).addEventListener('click', () => selectTier(k)));
+    grid.dataset.built = '1';
+  }
+  DISPLAY_ORDER.forEach(k => {
     const t = tiers[k] || {};
+    const btn = $('tcard-'+k);
+    if (!btn) return;
     const ret = Number(t.current_ret_pct||0);
     const tr = t.total_trades||0, w = t.wins||0;
     const wr = tr ? (w/tr*100).toFixed(0) + '%' : '—';
-    const sel = selTier === k ? ' sel' : '';
-    const hold = t.position ? ' hold' : '';
-    return `<button class="tcard${sel}${hold}" onclick="selectTier('${k}')">
+    btn.className = 'tcard' + (selTier === k ? ' sel' : '') + (t.position ? ' hold' : '');
+    btn.innerHTML = `
       <div class="thead">
         <span class="tlabel">${esc(t.label||k)}</span>
         <span class="tpill ${TIER_PILL[k]}">${esc((t.style||'').split('·')[0].trim())}</span>
@@ -346,9 +354,8 @@ function renderTierCards(d){
       <div class="tth">${esc(t.style||'')} · 15초 ${money(t.min_short_krw)}↑</div>
       <div class="teq mono">${won(t.current_equity)}원</div>
       <div class="tret mono ${cls(ret)}">${pct(ret)}</div>
-      <div class="tstat">${tierStatusText(t)}<br>승률 ${wr} · ${w}승 ${t.losses||0}패 (${tr}전)</div>
-    </button>`;
-  }).join('');
+      <div class="tstat" data-tstat="${k}">${tierStatusText(t)}<br>승률 ${wr} · ${w}승 ${t.losses||0}패 (${tr}전)</div>`;
+  });
 }
 
 function renderAggStrip(d){
