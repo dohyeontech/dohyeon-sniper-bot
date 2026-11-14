@@ -7,7 +7,7 @@
   [4]~[10] 신규 7전략 각각의 진입 트리거 (양성 + 경계 음성)
   [11] 10전략 각각의 청산 트리거 (목표/손절/트레이링/시간초과) + 쿨다운
   [12] 쿨다운·자금 독립
-  [13] BTC 필터 (전 전략 차단)
+  [13] BTC 필터 (모멘텀·돌파 8전략 차단 + 역추세 2전략 예외)
   [14] 리더보드 정렬 + 집계
   [15] 영속성
   [16] 통합 사이클(매수→청산) 및 승계 계좌 미변경 확인
@@ -515,7 +515,24 @@ E._close_position(s6, 100.5, "test TIME", E.kst_now(), "TIME")
 check("3m 시간초과 청산 후 쿨다운 없음", s6.get("cooldown_until") is None)
 
 # ------------------------------------------------------------ [13] BTC 필터
-print("[13] BTC 필터 — 전 전략 신규 진입 차단")
+print("[13] BTC 필터 — 모멘텀 8전략 차단 · 역추세 2전략 예외")
+check("예외 전략 = panic_bounce·rsi_oversold",
+      set(E.BTC_FILTER_EXEMPT) == {"panic_bounce", "rsi_oversold"}, str(E.BTC_FILTER_EXEMPT))
+check("예외 2전략 btc_filter False",
+      all(E.STRATEGIES[k]["btc_filter"] is False for k in E.BTC_FILTER_EXEMPT))
+check("나머지 8전략 btc_filter True",
+      all(E.STRATEGIES[k]["btc_filter"] is True
+          for k in E.STRATEGY_KEYS if k not in E.BTC_FILTER_EXEMPT),
+      str([k for k in E.STRATEGY_KEYS if E.STRATEGIES[k]["btc_filter"] is not True]))
+check("rules.btc_filter.exempt_strategies 공개",
+      list(E.RULES_V4["btc_filter"].get("exempt_strategies") or []) == list(E.BTC_FILTER_EXEMPT),
+      str(E.RULES_V4["btc_filter"].get("exempt_strategies")))
+check("rules.strategies[*].btc_filter 일치",
+      all(E.RULES_V4["strategies"][k]["btc_filter"] is E.STRATEGIES[k]["btc_filter"]
+          for k in E.STRATEGY_KEYS))
+check("신규 계좌 상태에도 btc_filter 반영",
+      all(E.new_strategy(k)["btc_filter"] is E.STRATEGIES[k]["btc_filter"] for k in E.STRATEGY_KEYS))
+
 state = fresh(BEAR)
 st = FakeStream()
 st.snaps = {"KRW-A": snap("KRW-A", 10.0, short_krw=60_000_000.0, surge=9.0)}
@@ -523,8 +540,50 @@ st.price = {"KRW-A": 10.0}
 E.run_sniper_tick(st)
 blocked = [k for k in E.STRATEGY_KEYS
            if state["strategies"][k]["status"] == "BTC_FILTER_BLOCKED"]
-check("10전략 전부 차단", len(blocked) == 10, str(len(blocked)))
-check("보유 포지션은 유지", True)
+check("모멘텀·돌파 8전략 차단",
+      sorted(blocked) == sorted(k for k in E.STRATEGY_KEYS if k not in E.BTC_FILTER_EXEMPT),
+      f"{len(blocked)}개 {blocked}")
+check("역추세 2전략은 BTC_FILTER_BLOCKED 아님",
+      all(state["strategies"][k]["status"] != "BTC_FILTER_BLOCKED" for k in E.BTC_FILTER_EXEMPT),
+      str([(k, state["strategies"][k]["status"]) for k in E.BTC_FILTER_EXEMPT]))
+check("역추세 예외 안내 문구 표시",
+      all("역추세 예외" in (state["strategies"][k]["last_event"] or "") for k in E.BTC_FILTER_EXEMPT),
+      str([state["strategies"][k]["last_event"] for k in E.BTC_FILTER_EXEMPT]))
+check("신호 없으면 역추세도 대기",
+      all(state["strategies"][k]["position"] is None for k in E.BTC_FILTER_EXEMPT))
+
+# BTC 하락 추세에서 역추세 신호는 실제 체결된다
+state = fresh(BEAR, candles={"KRW-R": {"market": "KRW-R", "age_sec": 5, "rsi": 24.0, "rsi_prev": 18.0,
+                                           "bb_upper": 101.0, "bw_rank": 0.5,
+                                           "bandwidth_pct": 3.0, "vol_ratio": 1.0}})
+st = FakeStream()
+st.snaps = {
+    "KRW-P": snap("KRW-P", 10.0, short_krw=8_000_000.0, surge=1.0, bid=0.7,
+                   chg=-3.2, price_15s_ago=9.8),
+    "KRW-R": snap("KRW-R", 10.0, short_krw=5_000_000.0, surge=1.0, bid=0.7),
+}
+st.price = {"KRW-P": 10.0, "KRW-R": 10.0}
+E.run_sniper_tick(st)
+check("BTC 하락에도 panic_bounce 진입",
+      (state["strategies"]["panic_bounce"]["position"] or {}).get("market") == "KRW-P",
+      str(state["strategies"]["panic_bounce"]["last_event"]))
+check("BTC 하락에도 rsi_oversold 진입",
+      (state["strategies"]["rsi_oversold"]["position"] or {}).get("market") == "KRW-R",
+      str(state["strategies"]["rsi_oversold"]["last_event"]))
+check("같은 순간 모멘텀·돌파 8전략은 진입 없음",
+      all(state["strategies"][k]["position"] is None
+          for k in E.STRATEGY_KEYS if k not in E.BTC_FILTER_EXEMPT))
+
+# 보유 포지션은 BTC 필터와 무관하게 유지된다
+state = fresh(BEAR)
+st = FakeStream()
+force_position(state, "3m", "KRW-HOLD", 100.0)
+st.price = {"KRW-HOLD": 100.5}
+st.snaps = {}
+E.run_sniper_tick(st)
+check("BTC 하락에도 보유 포지션 유지",
+      (state["strategies"]["3m"]["position"] or {}).get("market") == "KRW-HOLD",
+      str(state["strategies"]["3m"]["position"]))
 
 # ------------------------------------------------------------ [14] 리더보드
 print("[14] 리더보드 정렬")

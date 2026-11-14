@@ -19,8 +19,9 @@
     9. rsi_oversold     — 1분봉 RSI 과매도 반등
    10. bb_squeeze       — 1분봉 볼린저 스퀴즈 돌파
 
-공통 리스크 규칙: BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 **전 전략 신규 진입 차단**
-(보유 포지션은 유지). 손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
+공통 리스크 규칙: BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 **모멘텀·돌파 8전략 신규 진입 차단**
+(보유 포지션은 유지). 역추세 2전략(`panic_bounce`, `rsi_oversold`)만 `btc_filter: False`로 예외 적용되어
+BTC 하락 추세에서도 진입한다. 손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
 
 청산은 1.5초 판단 루프에서 틱 가격으로 감시한다. 목표 익절은 목표가 체결(초과분 미반영,
 보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
@@ -55,7 +56,7 @@ STRATEGIES = {
     # ---- v3.1에서 승계되는 3계좌 (규칙 동일, 15초 거래대금 문턱만 다름) ----
     "3m": {
         "key": "3m", "label": "300만↑", "name": "300만↑ 급등 추격",
-        "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True,
+        "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True, "btc_filter": True,
         "entry": "15초 거래대금 300만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
         "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
         "params": {"min_short_krw": 3_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
@@ -65,7 +66,7 @@ STRATEGIES = {
     },
     "10m": {
         "key": "10m", "label": "1,000만↑", "name": "1,000만↑ 급등 추격",
-        "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True,
+        "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
         "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
         "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
         "params": {"min_short_krw": 10_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
@@ -75,7 +76,7 @@ STRATEGIES = {
     },
     "30m": {
         "key": "30m", "label": "3,000만↑", "name": "3,000만↑ 급등 추격",
-        "style": "보수형 · 대형 슈팅", "kind": "surge", "legacy": True,
+        "style": "보수형 · 대형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
         "entry": "15초 거래대금 3,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
         "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
         "params": {"min_short_krw": 30_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
@@ -86,7 +87,7 @@ STRATEGIES = {
     # ---- 신규 7전략 ----
     "panic_bounce": {
         "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
-        "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False,
+        "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
         "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
         "exit": "목표 +2.0% · 손절 -1.5% · 최대 15분 · 쿨다운 5분",
         "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 2.0,
@@ -95,7 +96,7 @@ STRATEGIES = {
     },
     "pullback_reentry": {
         "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
-        "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False,
+        "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False, "btc_filter": True,
         "entry": "3~10분 고점 대비 -1.0~-2.2% 눌림 구간에서 15초 BID 65%↑ + 가격 상승 전환",
         "exit": "목표 +2.2% · 손절 -1.6% · 최대 25분 · 쿨다운 5분",
         "params": {"dd_min_pct": -2.2, "dd_max_pct": -1.0, "min_bid_ratio": 0.65,
@@ -105,7 +106,7 @@ STRATEGIES = {
     },
     "vwap_breakout": {
         "key": "vwap_breakout", "label": "VWAP 돌파", "name": "실시간 VWAP 돌파",
-        "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False,
+        "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False, "btc_filter": True,
         "entry": "직전 3분 VWAP 하단에서 15초 거래대금 2.5배↑ + BID 65%↑ 동반, VWAP +0.3%↑ 상향 돌파",
         "exit": "목표 +2.0% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
         "params": {"min_vol_ratio": 2.5, "min_bid_ratio": 0.65, "breakout_pct": 0.3,
@@ -115,7 +116,7 @@ STRATEGIES = {
     },
     "streak_ignition": {
         "key": "streak_ignition", "label": "매수 긁기", "name": "연속 매수 긁기",
-        "style": "모멘텀 · 순간 초동", "kind": "streak", "legacy": False,
+        "style": "모멘텀 · 순간 초동", "kind": "streak", "legacy": False, "btc_filter": True,
         "entry": "최근 10초 BID 비중 85%↑ + 체결 15건↑ + 15초 거래대금 500만↑",
         "exit": "목표 +1.8% · 손절 -1.2% · 최대 10분 · 쿨다운 3분",
         "params": {"min_ticks_10s": 15, "min_bid_10s": 0.85, "min_short_krw": 5_000_000,
@@ -125,7 +126,7 @@ STRATEGIES = {
     },
     "major_momentum": {
         "key": "major_momentum", "label": "대형주 스캘핑", "name": "대형주 TOP10 스캘핑",
-        "style": "모멘텀 · 유동성 상위", "kind": "major", "legacy": False,
+        "style": "모멘텀 · 유동성 상위", "kind": "major", "legacy": False, "btc_filter": True,
         "entry": "24h 거래대금 TOP10만 · 15초 거래대금 3.0배↑ + BID 65%↑ + 3분변동 +0.2~+2.0%",
         "exit": "목표 +1.5% · 트레일링 +1.0%→고점 -0.3% · 손절 -1.2% · 최대 30분 · 쿨다운 5분",
         "params": {"top_n": 10, "min_surge_ratio": 3.0, "min_bid_ratio": 0.65,
@@ -135,7 +136,7 @@ STRATEGIES = {
     },
     "rsi_oversold": {
         "key": "rsi_oversold", "label": "RSI 과매도", "name": "1분봉 RSI 과매도 반등",
-        "style": "역추세 · 지표 반전", "kind": "rsi", "legacy": False,
+        "style": "역추세 · 지표 반전", "kind": "rsi", "legacy": False, "btc_filter": False,
         "entry": "1분봉 RSI(14) 25 이하 과매도에서 RSI 상향 반전 + 15초 BID 60%↑",
         "exit": "목표 +1.8% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
         "params": {"rsi_period": 14, "rsi_threshold": 25.0, "min_bid_ratio": 0.60,
@@ -145,7 +146,7 @@ STRATEGIES = {
     },
     "bb_squeeze": {
         "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
-        "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False,
+        "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False, "btc_filter": True,
         "entry": "1분봉 볼린저밴드(20,2) 수축(최근 40봉 밴드폭 하위 25%) 후 상단 밴드 거래량 2.0배↑ 돌파",
         "exit": "목표 +2.4% · 손절 -1.6% · 최대 30분 · 쿨다운 5분",
         "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.25, "min_vol_ratio": 2.0,
@@ -154,6 +155,10 @@ STRATEGIES = {
                    "max_hold_min": 30, "cooldown_min": 5},
     },
 }
+
+
+# BTC 하락 추세에서도 신규 진입을 허용하는 역추세 예외 전략 (나머지는 btc_filter: True)
+BTC_FILTER_EXEMPT = tuple(k for k in STRATEGY_KEYS if not STRATEGIES[k].get("btc_filter", True))
 
 
 def _rules_block():
@@ -165,7 +170,9 @@ def _rules_block():
         "short_window_sec": 15,
         "base_window_sec": 180,
         "btc_filter": {"enabled": True, "sma_window": "15분봉 20이평", "threshold_pct": -0.2,
-                       "note": "BTC가 20이평 대비 -0.2% 초과 하회하면 전 전략 신규 진입 차단(보유 유지)"},
+                       "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 8전략 신규 진입 차단(보유 유지). "
+                                "역추세 2전략(투매 과매도 반등·RSI 과매도 반등)은 예외로 진입 허용"),
+                       "exempt_strategies": list(BTC_FILTER_EXEMPT)},
         "candle_cache": {"top_n": 15, "refresh_sec": 60, "sleep_sec": 0.25,
                          "note": "RSI·볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 순환 수집"},
         "gist_sync_interval_sec": 60,
@@ -174,6 +181,7 @@ def _rules_block():
             k: {"key": k, "label": STRATEGIES[k]["label"], "name": STRATEGIES[k]["name"],
                 "style": STRATEGIES[k]["style"], "entry": STRATEGIES[k]["entry"],
                 "exit": STRATEGIES[k]["exit"], "params": dict(STRATEGIES[k]["params"]),
+                "btc_filter": bool(STRATEGIES[k]["btc_filter"]),
                 "carried_over": STRATEGIES[k]["legacy"]}
             for k in STRATEGY_KEYS
         },
@@ -250,6 +258,7 @@ def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
         "name": meta["name"],
         "style": meta["style"],
         "kind": meta["kind"],
+        "btc_filter": bool(meta["btc_filter"]),
         "carried_over": meta["legacy"],
         "entry": meta["entry"],
         "exit": meta["exit"],
@@ -410,6 +419,7 @@ def ensure_v4_state():
         for k in STRATEGY_KEYS:     # 규칙 텍스트/파라미터는 코드 정의를 따른다
             state["strategies"][k]["entry"] = STRATEGIES[k]["entry"]
             state["strategies"][k]["exit"] = STRATEGIES[k]["exit"]
+            state["strategies"][k]["btc_filter"] = bool(STRATEGIES[k]["btc_filter"])
             state["strategies"][k].setdefault("params", dict(STRATEGIES[k]["params"]))
         state["strategy_order"] = list(STRATEGY_KEYS)
         _alias_legacy(state)
@@ -813,6 +823,7 @@ def _aggregate(state, stream):
         st["initial_capital"] = capital
         st["entry"] = STRATEGIES[key]["entry"]
         st["exit"] = STRATEGIES[key]["exit"]
+        st["btc_filter"] = bool(STRATEGIES[key]["btc_filter"])
         if len(st.get("recent_trades", [])) > 40:
             st["recent_trades"] = st["recent_trades"][-40:]
 
@@ -976,7 +987,8 @@ def run_sniper_tick(stream=None):
             except Exception:
                 st["cooldown_until"] = None
 
-        if bearish:
+        exempt = not bool(STRATEGIES[key]["btc_filter"])
+        if bearish and not exempt:
             st["status"] = "BTC_FILTER_BLOCKED"
             st["last_event"] = (f"🛑 BTC 15분봉 20이평 하회 ({btc.get('diff_pct', 0):+.2f}%) "
                                 f"— 신규 진입 차단")
@@ -995,6 +1007,9 @@ def run_sniper_tick(stream=None):
                 events.append(f"[{st['label']}] {st['last_event']}")
                 continue
         line, watch = _watch_line(st, best_any, len(snaps))
+        if bearish and exempt:
+            line = (f"♻️ 역추세 예외 — BTC 하락({btc.get('diff_pct', 0):+.2f}%)에도 진입 허용 · "
+                    f"{line}")
         st["last_event"] = line
         st["watch"] = {
             "market": watch["market"],

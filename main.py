@@ -141,6 +141,7 @@ def _merged_status():
         k: {"key": k, "label": STRATEGIES[k]["label"], "name": STRATEGIES[k]["name"],
             "style": STRATEGIES[k]["style"], "entry": STRATEGIES[k]["entry"],
             "exit": STRATEGIES[k]["exit"], "params": STRATEGIES[k]["params"],
+            "btc_filter": bool(STRATEGIES[k]["btc_filter"]),
             "carried_over": STRATEGIES[k]["legacy"]}
         for k in STRATEGY_KEYS
     }

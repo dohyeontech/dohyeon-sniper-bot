@@ -67,6 +67,7 @@
   .rk1{color:var(--gold)} .rk2{color:var(--silver)} .rk3{color:var(--bronze)}
   .sname{font-weight:800;letter-spacing:-.2px}
   .skey{font-size:9.5px;color:#5d6c82;font-family:ui-monospace,monospace}
+  .exempt{font-size:9.5px;color:#7fd6a8;margin-top:2px}
   .stratcell{display:flex;flex-direction:column;gap:1px;min-width:0}
   .retbar{height:4px;border-radius:999px;background:#0a1220;margin-top:4px;overflow:hidden;position:relative}
   .retbar>i{position:absolute;top:0;bottom:0;border-radius:999px}
@@ -228,7 +229,8 @@
       </div>
     </div>
     <div class="note">
-      공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 전 전략 신규 진입 차단(보유 유지).
+      공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 모멘텀·돌파 8전략 신규 진입 차단(보유 유지).
+      역추세 2전략(<b>투매 반등</b>·<b>RSI 과매도</b>)은 BTC 필터 예외로 하락 추세에서도 진입합니다.
       목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
       손절 시에만 전략별 쿨다운이 걸리며 그 쿨다운도 계좌별로 독립입니다.
     </div>
@@ -639,11 +641,11 @@ function renderInfra(d){
   const btcBadge = $('btcBadge');
   if (btc.trend){
     const bear = btc.is_bearish;
-    $('btcTrend').textContent = bear ? '하락 · 전 전략 차단' : (btc.trend === 'BULLISH' ? '상승 · 진입 허용' : '중립 · 진입 허용');
+    $('btcTrend').textContent = bear ? '하락 · 모멘텀 8전략 차단 (역추세 2전략 허용)' : (btc.trend === 'BULLISH' ? '상승 · 진입 허용' : '중립 · 진입 허용');
     $('btcTrend').style.color = bear ? 'var(--red)' : 'var(--green)';
     $('btcDetail').textContent = `BTC ${won(btc.btc_price)}원 · 20이평 ${pct(btc.diff_pct)}`;
     btcBadge.className = 'badge ' + (bear ? 'b-off' : 'b-live');
-    btcBadge.textContent = bear ? `BTC -${Math.abs(btc.diff_pct).toFixed(2)}% · 진입 차단` : `BTC ${pct(btc.diff_pct)} · 진입 허용`;
+    btcBadge.textContent = bear ? `BTC -${Math.abs(btc.diff_pct).toFixed(2)}% · 역추세 2전략만 허용` : `BTC ${pct(btc.diff_pct)} · 진입 허용`;
   }
   const p = d.persistence || {};
   $('gist').textContent = p.gist_enabled ? (p.gist_last_sync_ok === false ? '동기화 오류' : '동기화 중') : '비활성';
@@ -688,7 +690,7 @@ function renderRules(d){
       const m = meta[k] || {};
       return `<tr data-key="${k}">
         <td><b>${esc(m.name||k)}</b><div class="skey">${esc(k)} ${m.carried_over?'· 승계':''}</div></td>
-        <td class="neu" style="font-size:10.5px">${esc(m.style||'')}</td>
+        <td class="neu" style="font-size:10.5px">${esc(m.style||'')}${m.btc_filter===false?'<div class="exempt">♻️ BTC 필터 예외</div>':''}</td>
         <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.entry||'')}</td>
         <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.exit||'')}</td>
       </tr>`;
