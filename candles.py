@@ -17,6 +17,14 @@ import json
 import threading
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
+
+
+def _kst(ts):
+    """epoch 초를 KST 문자열로 (Render 서버는 UTC 기준)."""
+    return datetime.fromtimestamp(ts, KST).strftime("%Y-%m-%d %H:%M:%S")
 
 CANDLE_URL = "https://api.upbit.com/v1/candles/minutes/1"
 USER_AGENT = {"User-Agent": "Mozilla/5.0 (compatible; dohyeon-sniper-bot/4.0)"}
@@ -181,7 +189,7 @@ class CandleCache:
         return {
             "market": market,
             "updated_ts": time.time(),
-            "updated_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime()),
+            "updated_at": _kst(time.time()),
             "candles": len(completed),
             "last_close": closes[-1],
             "last_candle_open": float(chrono[-1]["opening_price"]),
@@ -229,10 +237,8 @@ class CandleCache:
             "requests": self._requests,
             "errors": self._errors,
             "last_error": self._last_error,
-            "last_cycle_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self._last_cycle_at))
-            if self._last_cycle_at else None,
-            "started_at": time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self._started_at))
-            if self._started_at else None,
+            "last_cycle_at": _kst(self._last_cycle_at) if self._last_cycle_at else None,
+            "started_at": _kst(self._started_at) if self._started_at else None,
             "sample": sample,
         }
 

@@ -341,17 +341,45 @@ function cdText(ms){
 }
 
 function statusPill(t){
+  const s = statusInfo(t);
+  return `<span class="pill ${s.cls}">${s.text}</span>`;
+}
+function statusInfo(t){
   if (t.position){
     const g = Number(t.position.unrealized_pct||0);
-    return `<span class="pill p-hold">보유 ${esc(t.position.name||t.position.market)} <b class="${cls(g)}">${pct(g)}</b></span>`;
+    return {text: `보유 ${t.position.name||t.position.market} ${pct(g)}`, cls: 'p-hold'};
   }
   const ms = cooldownLeft(t.cooldown_until);
-  if (ms) return `<span class="pill p-cool">쿨다운 ${cdText(ms)}</span>`;
-  if (t.status === 'BTC_FILTER_BLOCKED') return `<span class="pill p-btc">BTC 필터 차단</span>`;
-  return `<span class="pill p-wait">신호 대기</span>`;
+  if (ms) return {text: '쿨다운 ' + cdText(ms), cls: 'p-cool'};
+  if (t.status === 'BTC_FILTER_BLOCKED') return {text: 'BTC 필터 차단', cls: 'p-btc'};
+  return {text: '신호 대기', cls: 'p-wait'};
 }
 
-/* ---------------- 리더보드 ---------------- */
+/* ---------------- 리더보드 (행 노드를 유지해 클릭이 새로고침에 끊기지 않게) ---------------- */
+const boardRows = {};
+function buildBoardRows(d){
+  const tbody = $('boardBody');
+  const keys = (d.leaderboard||[]).map(r => r.key);
+  if (tbody.dataset.built === keys.join(',')) return;
+  tbody.innerHTML = keys.map(k => `<tr data-key="${k}">
+      <td class="rk"><span data-f="rank"></span></td>
+      <td><div class="stratcell">
+        <div><span class="sname" data-f="name"></span> <span class="pill" data-f="kind"></span></div>
+        <div class="skey" data-f="sub"></div>
+        <div class="retbar"><i data-f="bar"></i></div>
+      </div></td>
+      <td class="mono" data-f="eq" style="text-align:right"></td>
+      <td class="mono" data-f="ret" style="text-align:right;font-weight:800"></td>
+      <td class="mono lib" data-f="pnl" style="text-align:right"></td>
+      <td class="mono" data-f="wr" style="text-align:right"></td>
+      <td class="mono neu lib" data-f="rec" style="text-align:right"></td>
+      <td><span class="pill" data-f="status"></span></td>
+      <td class="neu lib" data-f="event" style="font-size:10.5px;white-space:normal;max-width:250px"></td>
+    </tr>`).join('');
+  for (const tr of tbody.querySelectorAll('tr')) boardRows[tr.dataset.key] = tr;
+  tbody.dataset.built = keys.join(',');
+}
+
 function renderBoard(d){
   const rows = (d.leaderboard || []);
   const agg = d.aggregate || {};
@@ -360,59 +388,83 @@ function renderBoard(d){
   $('boardUpdated').textContent = '갱신 ' + (d.last_checked_time||'—').slice(11);
   if (!rows.length){
     $('boardBody').innerHTML = `<tr><td colspan="9" class="neu" style="padding:14px">집계 대기 중…</td></tr>`;
+    $('boardBody').dataset.built = '';
     return;
   }
+  buildBoardRows(d);
   const maxAbs = Math.max(1, ...rows.map(r => Math.abs(Number(r.ret_pct)||0)));
-  $('boardBody').innerHTML = rows.map(r => {
+  const tbody = $('boardBody');
+  rows.forEach(r => {
+    const tr = boardRows[r.key];
+    if (!tr) return;
     const st = (d.strategies || {})[r.key] || {};
+    const q = s => tr.querySelector(`[data-f="${s}"]`);
     const ret = Number(r.ret_pct||0);
-    const width = Math.min(100, Math.abs(ret)/maxAbs*100);
-    const barColor = ret >= 0 ? 'linear-gradient(90deg,#0ea5e9,#34d399)' : 'linear-gradient(90deg,#7f1d3a,#fb7185)';
-    const medal = medals[r.rank-1] || '';
-    const kindPill = r.carried_over ? '<span class="pill p-legacy">승계</span>' : '<span class="pill p-new">신규</span>';
-    return `<tr data-key="${r.key}" class="${selKey===r.key?'sel':''}">
-      <td class="rk ${r.rank<=3?'rk'+r.rank:''}">${medal || r.rank}</td>
-      <td>
-        <div class="stratcell">
-          <div><span class="sname">${esc(r.name||r.label)}</span> ${kindPill}</div>
-          <div class="skey">${esc(r.key)} · ${esc(r.style||'')}</div>
-          <div class="retbar"><i style="width:${width.toFixed(1)}%;background:${barColor};${ret<0?'right:0;left:auto;':''}"></i></div>
-        </div>
-      </td>
-      <td class="mono" style="text-align:right">${won(r.equity)}</td>
-      <td class="mono ${cls(ret)}" style="text-align:right;font-weight:800">${pct(ret)}</td>
-      <td class="mono ${cls(r.realized_pnl)} lib" style="text-align:right">${won(r.realized_pnl)}</td>
-      <td class="mono" style="text-align:right">${r.trades ? (r.win_rate_pct||0).toFixed(1)+'%' : '—'}</td>
-      <td class="mono neu lib" style="text-align:right">${r.wins||0}승 ${r.losses||0}패 (${r.trades||0})</td>
-      <td>${statusPill(st)}</td>
-      <td class="neu lib" style="font-size:10.5px;white-space:normal;max-width:250px">${esc((r.last_event||'').slice(0,80))}</td>
-    </tr>`;
-  }).join('');
+    const tr2 = r.trades||0;
+
+    tr.className = (selKey === r.key ? 'sel' : '');
+    tr.dataset.rank = r.rank;
+    q('rank').textContent = medals[r.rank-1] || r.rank;
+    q('rank').className = r.rank <= 3 ? 'rk'+r.rank : '';
+    q('name').textContent = r.name || r.label;
+    const kind = q('kind');
+    kind.textContent = r.carried_over ? '승계' : '신규';
+    kind.className = 'pill ' + (r.carried_over ? 'p-legacy' : 'p-new');
+    q('sub').textContent = `${r.key} · ${r.style||''}`;
+    const bar = q('bar');
+    bar.style.width = Math.min(100, Math.abs(ret)/maxAbs*100).toFixed(1) + '%';
+    bar.style.background = ret >= 0 ? 'linear-gradient(90deg,#0ea5e9,#34d399)' : 'linear-gradient(90deg,#7f1d3a,#fb7185)';
+    bar.style.left = ret < 0 ? 'auto' : '0';
+    bar.style.right = ret < 0 ? '0' : 'auto';
+    q('eq').textContent = won(r.equity);
+    q('ret').textContent = pct(ret);
+    q('ret').className = 'mono ' + cls(ret);
+    q('pnl').textContent = tr2 ? won(r.realized_pnl) : '—';
+    q('pnl').className = 'mono lib ' + cls(r.realized_pnl || 0);
+    q('wr').textContent = tr2 ? (r.win_rate_pct||0).toFixed(1) + '%' : '—';
+    q('rec').textContent = `${r.wins||0}승 ${r.losses||0}패 (${tr2})`;
+    const si = statusInfo(st);
+    q('status').textContent = si.text;
+    q('status').className = 'pill ' + si.cls;
+    q('event').textContent = (r.last_event || '').slice(0, 80);
+    tbody.appendChild(tr);        // 순위 순서로 재배치 (노드 자체는 유지)
+  });
 }
 
-/* ---------------- 전략 카드 ---------------- */
+/* ---------------- 전략 카드 (노드 유지) ---------------- */
 function renderCards(d){
   const rows = (d.leaderboard || []);
   const grid = $('stratCards');
   const keys = rows.map(r => r.key);
-  if (grid.dataset.order !== keys.join(',')){
-    grid.innerHTML = keys.map(k => `<button class="sc" id="sc-${k}" data-key="${k}"></button>`).join('');
-    grid.dataset.order = keys.join(',');
+  if (grid.dataset.built !== keys.join(',')){
+    grid.innerHTML = keys.map(k => `<button class="sc" id="sc-${k}" data-key="${k}">
+      <div class="scrank" data-f="rank"></div>
+      <div class="scname" data-f="name"></div>
+      <div class="sclabel" data-f="key"></div>
+      <div class="sceq mono" data-f="eq"></div>
+      <div class="scret mono" data-f="ret"></div>
+      <div class="scstat"><span class="pill" data-f="status"></span><br><span data-f="rec"></span></div>
+    </button>`).join('');
+    grid.dataset.built = keys.join(',');
   }
   rows.forEach(r => {
     const st = (d.strategies || {})[r.key] || {};
     const el = $('sc-'+r.key);
     if (!el) return;
+    const q = s => el.querySelector(`[data-f="${s}"]`);
     const ret = Number(r.ret_pct||0);
     const tr = r.trades||0;
     el.className = 'sc' + (selKey===r.key?' sel':'') + (st.position?' hold':'');
-    el.innerHTML = `
-      <div class="scrank">${medals[r.rank-1] || ''} ${r.rank}위 ${r.carried_over?'· 승계':''}</div>
-      <div class="scname">${esc(r.name||r.label)}</div>
-      <div class="sclabel">${esc(r.key)}</div>
-      <div class="sceq mono">${won(r.equity)}</div>
-      <div class="scret mono ${cls(ret)}">${pct(ret)}</div>
-      <div class="scstat">${statusPill(st)}<br>승률 ${tr?(r.win_rate_pct||0).toFixed(0)+'%':'—'} · ${r.wins||0}승 ${r.losses||0}패</div>`;
+    q('rank').textContent = `${medals[r.rank-1] || ''} ${r.rank}위 ${r.carried_over?'· 승계':''}`;
+    q('name').textContent = r.name || r.label;
+    q('key').textContent = r.key;
+    q('eq').textContent = won(r.equity);
+    q('ret').textContent = pct(ret);
+    q('ret').className = 'scret mono ' + cls(ret);
+    const si = statusInfo(st);
+    q('status').className = 'pill ' + si.cls;
+    q('status').textContent = si.text;
+    q('rec').textContent = `승률 ${tr?(r.win_rate_pct||0).toFixed(0)+'%':'—'} · ${r.wins||0}승 ${r.losses||0}패`;
   });
 }
 
@@ -630,15 +682,22 @@ function renderScan(d){
 function renderRules(d){
   const meta = d.strategy_meta || (d.rules && d.rules.strategies) || {};
   const order = d.strategy_order || Object.keys(meta);
-  $('rulesBody').innerHTML = order.map(k => {
-    const m = meta[k] || {};
-    return `<tr style="cursor:pointer" data-key="${k}" class="${selKey===k?'sel':''}">
-      <td><b>${esc(m.name||k)}</b><div class="skey">${esc(k)} ${m.carried_over?'· 승계':''}</div></td>
-      <td class="neu" style="font-size:10.5px">${esc(m.style||'')}</td>
-      <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.entry||'')}</td>
-      <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.exit||'')}</td>
-    </tr>`;
-  }).join('');
+  const body = $('rulesBody');
+  if (body.dataset.built !== '1'){
+    body.innerHTML = order.map(k => {
+      const m = meta[k] || {};
+      return `<tr data-key="${k}">
+        <td><b>${esc(m.name||k)}</b><div class="skey">${esc(k)} ${m.carried_over?'· 승계':''}</div></td>
+        <td class="neu" style="font-size:10.5px">${esc(m.style||'')}</td>
+        <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.entry||'')}</td>
+        <td style="white-space:normal;font-size:11px;line-height:1.45">${esc(m.exit||'')}</td>
+      </tr>`;
+    }).join('');
+    body.dataset.built = '1';
+  }
+  for (const tr of body.querySelectorAll('tr')){
+    tr.classList.toggle('sel', tr.dataset.key === selKey);
+  }
 }
 
 function renderTrades(d){
