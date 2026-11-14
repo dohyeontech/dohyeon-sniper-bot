@@ -59,7 +59,8 @@
   table{width:100%;border-collapse:collapse;font-size:12px}
   th{text-align:left;font-size:10px;color:var(--dim2);font-weight:700;padding:7px 8px;border-bottom:1px solid var(--line);white-space:nowrap}
   td{padding:8px;border-bottom:1px solid #121b29;white-space:nowrap;vertical-align:middle}
-  tbody tr{cursor:pointer;transition:background .12s}
+  tbody tr[data-key]{cursor:pointer}
+  tbody tr{transition:background .12s}
   tbody tr:hover{background:#0e1826}
   tbody tr.sel{background:#0d2231;box-shadow:inset 3px 0 0 var(--cyan)}
   .rk{font-weight:900;font-size:12.5px;width:34px;text-align:center}
