@@ -5,10 +5,16 @@ import threading
 import time
 import traceback
 from contextlib import asynccontextmanager
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from fastapi import FastAPI
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+
+KST = timezone(timedelta(hours=9))
+
+
+def kst_now_str():
+    return datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
@@ -34,7 +40,7 @@ def engine_loop():
         try:
             res = run_sniper_tick(stream)
             _boot["ticks"] += 1
-            print(f"[Tick {datetime.now().strftime('%H:%M:%S')}] {res.get('status')} | "
+            print(f"[Tick {datetime.now(KST).strftime('%H:%M:%S')}] {res.get('status')} | "
                   f"{res.get('event')} | Equity {res.get('equity'):,} KRW")
         except Exception as e:
             _boot["last_error"] = f"{type(e).__name__}: {e}"
@@ -64,7 +70,7 @@ def ws_watch_loop():
 async def lifespan(app: FastAPI):
     global is_running
     is_running = True
-    _boot["started_at"] = datetime.now().isoformat()
+    _boot["started_at"] = kst_now_str()
     try:
         ensure_v3_state()
     except Exception as e:
@@ -97,7 +103,7 @@ def _merged_status():
     data["ws_last_message_at"] = ws["ws_last_message_at"]
     data["ws_reconnects"] = ws["ws_reconnects"]
     data["persistence"] = sync_status()
-    data["server_time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    data["server_time"] = kst_now_str()
     data["engine_ticks"] = _boot["ticks"]
     data["engine_started_at"] = _boot["started_at"]
     data["engine_last_error"] = _boot["last_error"]
@@ -122,7 +128,7 @@ def health():
         "ws_connected": ws["ws_connected"],
         "ws_ticks_per_sec": ws["ws_ticks_per_sec"],
         "last_checked": state.get("last_checked_time", ""),
-        "server_time": datetime.now().isoformat(),
+        "server_time": datetime.now(KST).isoformat(),
     }
 
 

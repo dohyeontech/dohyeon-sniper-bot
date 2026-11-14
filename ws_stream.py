@@ -14,6 +14,14 @@ import threading
 import time
 import urllib.request
 from collections import deque
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
+
+
+def _kst(ts):
+    """epoch 초를 KST 문자열로 (Render 서버는 UTC 기준)."""
+    return datetime.fromtimestamp(ts, KST).strftime("%Y-%m-%d %H:%M:%S")
 
 try:
     from websockets.sync.client import connect as _ws_connect
@@ -315,13 +323,9 @@ class UpbitTradeStream:
             "ws_ticks_per_sec": tps,
             "ws_ticks_total": self._ticks_total,
             "ws_reconnects": self.reconnects,
-            "ws_last_message_at": (
-                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.last_message_at))
-                if self.last_message_at else None),
+            "ws_last_message_at": _kst(self.last_message_at) if self.last_message_at else None,
             "ws_message_age_sec": round(now - self.last_message_at, 1) if self.last_message_at else None,
-            "ws_connected_at": (
-                time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(self.connected_at))
-                if self.connected_at else None),
+            "ws_connected_at": _kst(self.connected_at) if self.connected_at else None,
             "ws_last_error": self.last_error,
             "ws_url": WS_URL,
         }

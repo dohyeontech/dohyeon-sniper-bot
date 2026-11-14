@@ -11,6 +11,9 @@ import os
 import threading
 import time
 import urllib.request
+from datetime import datetime, timedelta, timezone
+
+KST = timezone(timedelta(hours=9))
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
@@ -119,7 +122,7 @@ def _sync_gist(state):
         _last_sync_ts = time.time()
         _last_sync_ok = True
         _last_sync_error = None
-        _last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        _last_sync_at = datetime.now(KST).strftime("%Y-%m-%d %H:%M:%S")
         return True
     except Exception as e:
         _last_sync_ok = False

@@ -414,11 +414,22 @@ async function loadArchive(v){
 
 function renderArchive(v, a){
   const stat = (k, val, sub, color) => `<div class="card"><div class="k">${k}</div><div class="v mono" style="color:${color||'var(--txt)'}">${val}</div><div class="s">${sub||''}</div></div>`;
+  const period = a.operating_period || '';
+  const parts = period.split('~').map(s => s.trim());
+  let dur = '—';
+  if (parts.length === 2){
+    const t0 = new Date(parts[0].replace(' ','T') + '+09:00').getTime();
+    const t1 = new Date(parts[1].replace(' ','T') + '+09:00').getTime();
+    if (!isNaN(t0) && !isNaN(t1)){
+      const h = (t1 - t0) / 3600000;
+      dur = h >= 24 ? (h/24).toFixed(1) + '일' : h.toFixed(1) + '시간';
+    }
+  }
   const stats = [
     stat('최종 평가 자산', won(a.final_equity) + '원', '초기 ' + won(a.initial_capital) + '원'),
     stat('누적 수익률', pct(a.total_return_pct), '실현 ' + won(a.total_realized_pnl) + '원', a.total_return_pct>=0?'var(--green)':'var(--red)'),
     stat('전적', `${a.total_trades}전 ${a.wins}승 ${a.losses}패`, '승률 ' + (a.win_rate_pct||0) + '%'),
-    stat('운용 기간', (a.operating_period||'—').split('~')[1] || '—', (a.operating_period||''))
+    stat('운용 기간', dur, period || '—')
   ].join('');
   $(v+'Stats').innerHTML = stats;
   $(v+'Title').textContent = '📦 ' + (a.title || (v + '.0 아카이브'));
