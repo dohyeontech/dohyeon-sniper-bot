@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+.env
+create_gist.py
+upload_to_github.py
+gist_info.json
