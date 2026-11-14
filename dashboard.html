@@ -601,8 +601,7 @@ function renderDetail(d){
     </div>
     <div class="grid g2" style="margin-bottom:9px">
       <div class="rulebox"><b>진입</b><br>${esc(st.entry || r.last_event || '')}</div>
-      <div class="rulebox"><b class="rk2">청산</b><br>${esc(st.exit || '')}
-        ${prm.max_hold_min?`<span class="small"> · 최대 보유 ${prm.max_hold_min}분 · 손절 쿨다운 ${prm.cooldown_min||5}분</span>`:''}</div>
+      <div class="rulebox"><b class="rk2">청산</b><br>${esc(st.exit || '')}</div>
     </div>
     <div class="small" style="margin-bottom:6px">
       <b style="color:#c7d3e6">최근 상태</b> · ${esc(st.last_event||'—')}
