@@ -34,18 +34,19 @@ def _creds():
 
 
 def _default_state():
+    """파일도 Gist도 없을 때의 최소 상태 — 엔진이 v3.1 3계좌 상태로 초기화한다."""
     return {
-        "version": "3.0",
+        "version": "3.1",
         "status": "WAITING_FOR_SURGE",
-        "initial_capital": 2000000,
-        "cash_krw": 2000000.0,
+        "initial_capital": 6000000,
+        "cash_krw": 6000000.0,
         "position": None,
         "total_realized_pnl": 0.0,
         "total_trades": 0,
         "wins": 0,
         "losses": 0,
         "recent_trades": [],
-        "current_equity": 2000000,
+        "current_equity": 6000000,
         "current_ret_pct": 0.0,
     }
 

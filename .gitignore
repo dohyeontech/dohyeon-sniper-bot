@@ -1,8 +1,9 @@
 __pycache__/
 *.pyc
 .env
+tests/_test_state.json
+_tmp/
 create_gist.py
 upload_to_github.py
 gist_info.json
-_tmp/
 _ws_probe*.py

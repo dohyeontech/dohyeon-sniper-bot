@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>⚡ 가상 스나이퍼 봇 v3.0 · WebSocket 초단타</title>
+<title>⚡ 가상 스나이퍼 봇 v3.1 · 3계좌 병렬 초단타</title>
 <style>
   @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
   :root{
@@ -43,10 +43,43 @@
   .card .k{font-size:11px;color:var(--dim);font-weight:600;margin-bottom:5px;letter-spacing:.2px}
   .card .v{font-size:19px;font-weight:800;letter-spacing:-.5px}
   .card .s{font-size:11px;color:var(--dim);margin-top:4px}
+
+  /* ---- 대금별 3계좌 비교 카드 ---- */
+  .tiergrid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:10px}
+  .tcard{position:relative;background:linear-gradient(180deg,#0f1a2a,#0b1320);border:1px solid var(--line);
+         border-radius:16px;padding:13px 13px 12px;cursor:pointer;transition:.16s;text-align:left;
+         font-family:inherit;color:var(--txt)}
+  .tcard:hover{border-color:#2a4a68;transform:translateY(-1px)}
+  .tcard.sel{border-color:var(--cyan);box-shadow:0 0 0 1px #17506a,0 0 26px rgba(56,189,248,.16)}
+  .tcard.hold{border-color:#1b4a63}
+  .tcard .thead{display:flex;justify-content:space-between;align-items:center;gap:6px}
+  .tcard .tlabel{font-size:16px;font-weight:900;letter-spacing:-.4px}
+  .tcard .tpill{font-size:9.5px;font-weight:800;padding:2px 7px;border-radius:5px;white-space:nowrap}
+  .tp-agg{background:#2b1030;color:#e9a6ff;border:1px solid #52205f}
+  .tp-bal{background:#0b2b32;color:#5eead4;border:1px solid #14535f}
+  .tp-con{background:#0d2333;color:#7dd3fc;border:1px solid #1b4a63}
+  .tcard .tth{font-size:10px;color:var(--dim);margin-top:2px}
+  .tcard .teq{font-size:17px;font-weight:800;margin-top:8px;letter-spacing:-.4px}
+  .tcard .tret{font-size:11.5px;font-weight:700;margin-top:1px}
+  .tcard .tstat{font-size:10.5px;color:var(--dim);margin-top:7px;border-top:1px dashed #1b2740;padding-top:7px;
+                line-height:1.45;min-height:32px}
+  .tcard .tstat b{color:#c7d3e6}
+  .aggstrip{display:flex;flex-wrap:wrap;gap:8px 18px;align-items:center;background:#0a1420;border:1px solid #16233a;
+            border-radius:12px;padding:10px 13px;font-size:11.5px;color:var(--dim);margin-bottom:16px}
+  .aggstrip b{color:var(--txt);font-size:13px}
+  .aggstrip .sep{width:1px;height:14px;background:#1e2a3f}
+  .selbar{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:4px 0 10px}
+  .selbar .lbl{font-size:11px;color:var(--dim);margin-right:2px}
+  .chip{font-size:11px;font-weight:700;padding:5px 11px;border-radius:999px;border:1px solid var(--line);
+        background:#0c1421;color:var(--dim);cursor:pointer;font-family:inherit}
+  .chip.active{background:#0d2b3a;color:var(--cyan);border-color:#17506a}
+
   .poscard{background:linear-gradient(180deg,#0d2030,#0b1524);border:1px solid #1b4a63;border-radius:14px;
            padding:14px;margin:12px 0;box-shadow:0 0 24px rgba(56,189,248,.08)}
   .poshead{display:flex;justify-content:space-between;align-items:center;gap:8px;margin-bottom:10px;flex-wrap:wrap}
   .tag{font-size:10.5px;font-weight:800;padding:2px 8px;border-radius:5px;background:var(--cyan);color:#04121b}
+  .tbadge{font-size:10px;font-weight:800;padding:2px 7px;border-radius:5px;background:#101c2c;color:#8fd4f0;
+          border:1px solid #1b4a63;margin-left:4px}
   .posgrid{display:grid;grid-template-columns:repeat(4,1fr);gap:8px}
   .kv{background:#080e18;border:1px solid #16233a;border-radius:10px;padding:8px 9px}
   .kv .k{font-size:10.5px;color:var(--dim)}
@@ -64,6 +97,9 @@
   .p-no{background:#24101a;color:#f0879c;border:1px solid #5d1f30}
   .p-buy{background:#06222e;color:var(--cyan);border:1px solid #17506a}
   .p-sell{background:#2a1020;color:#f9a8d4;border:1px solid #63203f}
+  .p-t3{background:#0b2b32;color:#5eead4;border:1px solid #14535f}
+  .p-t10{background:#0d2333;color:#7dd3fc;border:1px solid #1b4a63}
+  .p-t30{background:#241a3a;color:#c4b5fd;border:1px solid #3b2c63}
   .rej{color:#f0879c;font-size:10.5px;white-space:normal;max-width:260px;line-height:1.35}
   .scroll{max-height:420px;overflow:auto}
   .small{font-size:11px;color:var(--dim);line-height:1.55}
@@ -75,6 +111,8 @@
     .g4{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:1fr} .g2{grid-template-columns:1fr}
     .posgrid{grid-template-columns:repeat(2,1fr)} h1{font-size:17px}
     .tab{font-size:11px;padding:9px 4px}
+    .tiergrid{grid-template-columns:1fr;gap:8px}
+    .tcard .tstat{min-height:0}
   }
 </style>
 </head>
@@ -84,11 +122,11 @@
     <div>
       <div class="badges">
         <span class="badge b-brand">도현의 테크브리프</span>
-        <span id="verBadge" class="badge b-live"><span id="verDot" class="dot on"></span>v3.0 WEBSOCKET</span>
+        <span id="verBadge" class="badge b-live"><span id="verDot" class="dot on"></span>v3.1 3계좌 병렬</span>
         <span id="wsBadge" class="badge b-wait"><span class="dot off"></span>WS 연결 확인 중</span>
       </div>
-      <h1>⚡ 가상 스나이퍼 봇 v3.0</h1>
-      <div class="sub">업비트 실시간 체결 스트림 · 초 단위 초입 포착 엔진 (모의 시드 200만 원)</div>
+      <h1>⚡ 가상 스나이퍼 봇 v3.1 · 대금별 3계좌</h1>
+      <div class="sub">업비트 실시간 체결 스트림 · 웹소켓 1개 공유 · 1.5초 판단 · 계좌당 모의 시드 200만 원(총 600만 원)</div>
     </div>
     <div style="text-align:right">
       <div class="small">마지막 엔진 판단</div>
@@ -97,44 +135,37 @@
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-tab="v3" onclick="showTab('v3')">⚡ v3.0 라이브 (WebSocket)</button>
+    <button class="tab active" data-tab="v3" onclick="showTab('v3')">⚡ v3.1 라이브 (3계좌)</button>
     <button class="tab" data-tab="v2" onclick="showTab('v2')">📦 v2.0 아카이브</button>
     <button class="tab" data-tab="v1" onclick="showTab('v1')">📦 v1.0 아카이브</button>
   </div>
 
   <!-- ================= v3 LIVE ================= -->
   <section id="tab-v3">
+    <h2 style="margin-top:2px">⚖️ 대금별 3계좌 비교 <span class="small" style="font-weight:500">— 카드를 누르면 해당 계좌 상세</span></h2>
+    <div class="tiergrid" id="tierCards">
+      <div class="tcard"><div class="tlabel">불러오는 중…</div></div>
+    </div>
+    <div class="aggstrip" id="aggStrip">통합 지표 불러오는 중…</div>
+
+    <div class="selbar">
+      <span class="lbl">보기</span>
+      <button class="chip active" data-sel="all" onclick="selectTier('all')">통합</button>
+      <button class="chip" data-sel="3m" onclick="selectTier('3m')">300만↑</button>
+      <button class="chip" data-sel="10m" onclick="selectTier('10m')">1,000만↑</button>
+      <button class="chip" data-sel="30m" onclick="selectTier('30m')">3,000만↑</button>
+    </div>
+
     <div class="grid g4">
-      <div class="card"><div class="k">총 평가 자산</div><div id="equity" class="v mono">—</div><div id="seed" class="s">시드 2,000,000원</div></div>
-      <div class="card"><div class="k">누적 수익률</div><div id="ret" class="v mono">—</div><div id="pnl" class="s">실현 —</div></div>
+      <div class="card"><div class="k" id="lblEquity">평가 자산</div><div id="equity" class="v mono">—</div><div id="seed" class="s">시드 —</div></div>
+      <div class="card"><div class="k">수익률</div><div id="ret" class="v mono">—</div><div id="pnl" class="s">실현 —</div></div>
       <div class="card"><div class="k">현재 상태</div><div id="status" class="v" style="font-size:16px">—</div><div id="cash" class="s">현금 —</div></div>
-      <div class="card"><div class="k">전적 (승률)</div><div id="record" class="v mono">—</div><div id="counts" class="s">0승 0패</div></div>
+      <div class="card"><div class="k">전적 (승률)</div><div id="record" class="v mono">—</div><div id="counts" class="s">—</div></div>
     </div>
 
-    <div id="posCard" class="poscard hidden">
-      <div class="poshead">
-        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
-          <span class="tag">HOLDING</span>
-          <strong id="posName" style="font-size:15px">—</strong>
-          <span id="posMarket" class="mono small">KRW-?</span>
-        </div>
-        <div id="posGain" class="mono" style="font-size:18px;font-weight:800">—</div>
-      </div>
-      <div class="posgrid">
-        <div class="kv"><div class="k">진입가</div><div id="posEntry" class="v mono">—</div></div>
-        <div class="kv"><div class="k">현재가</div><div id="posNow" class="v mono">—</div></div>
-        <div class="kv"><div class="k">최고가</div><div id="posHigh" class="v mono" style="color:var(--amber)">—</div></div>
-        <div class="kv"><div class="k">보유 시간</div><div id="posHold" class="v mono">—</div></div>
-        <div class="kv"><div class="k">목표 익절 (+2.5%)</div><div id="posTp" class="v mono" style="color:var(--green)">—</div></div>
-        <div class="kv"><div class="k">손절 (-1.8%)</div><div id="posSl" class="v mono" style="color:var(--red)">—</div></div>
-        <div class="kv"><div class="k">진입 근거</div><div id="posWhy" class="v mono" style="font-size:11.5px">—</div></div>
-        <div class="kv"><div class="k">평가 손익</div><div id="posPnl" class="v mono">—</div></div>
-      </div>
-      <div class="bar"><i id="posBar" style="width:0%"></i></div>
-      <div class="small" id="posBarLabel" style="margin-top:6px">—</div>
-    </div>
+    <div id="posCards"></div>
 
-    <h2>📡 웹소켓 수신 상태</h2>
+    <h2>📡 웹소켓 수신 상태 <span class="small" style="font-weight:500">— 3계좌 공유 연결 1개</span></h2>
     <div class="grid g4">
       <div class="card"><div class="k">연결</div><div id="wsConn" class="v" style="font-size:15px">—</div><div id="wsConnAt" class="s">—</div></div>
       <div class="card"><div class="k">구독 마켓</div><div id="wsMarkets" class="v mono">—</div><div class="s">유의종목 제외 · 24h 30억↑</div></div>
@@ -146,43 +177,47 @@
     <div class="card" style="padding:8px 6px">
       <div class="scroll" style="max-height:300px">
         <table>
-          <thead><tr><th>종목</th><th>현재가</th><th>15초 거래대금</th><th>폭발배수</th><th>매수비율</th><th>3분변동</th><th>판정</th></tr></thead>
+          <thead><tr><th>종목</th><th>현재가</th><th>15초 거래대금</th><th>폭발배수</th><th>매수비율</th><th>3분변동</th><th>진입 가능 계좌</th></tr></thead>
           <tbody id="scanBody"><tr><td colspan="7" class="neu" style="padding:14px">웹소켓 틱 수신 대기 중…</td></tr></tbody>
         </table>
       </div>
       <div class="small" id="scanSummary" style="padding:7px 8px 2px">—</div>
     </div>
 
-    <h2>🧭 필터 · 영속성</h2>
-    <div class="grid g3">
-      <div class="card"><div class="k">BTC 추세 필터</div><div id="btcTrend" class="v" style="font-size:15px">—</div><div id="btcDetail" class="s">—</div></div>
-      <div class="card"><div class="k">손절 쿨다운</div><div id="cool" class="v" style="font-size:15px">—</div><div class="s">연쇄 손절 방지 5분</div></div>
+    <h2>🧭 필터 · 계좌별 쿨다운 · 영속성</h2>
+    <div class="grid g2">
+      <div class="card"><div class="k">BTC 추세 필터 (3계좌 공통)</div><div id="btcTrend" class="v" style="font-size:15px">—</div><div id="btcDetail" class="s">—</div></div>
       <div class="card"><div class="k">Gist 영속성</div><div id="gist" class="v" style="font-size:13px">—</div><div id="gistDetail" class="s">—</div></div>
     </div>
+    <div class="grid g3" style="margin-top:10px" id="coolGrid"></div>
 
-    <h2>⚙️ v3.0 매매 규칙</h2>
+    <h2>⚙️ v3.1 매매 규칙</h2>
     <div class="card">
       <table>
         <tbody>
-          <tr><td style="width:110px;color:var(--dim)">진입 엔진</td><td>업비트 <b>WebSocket 체결(trade) 스트림</b> — <b>1.5초</b> 주기 즉시 판단 (v2.0: 5분봉 60초 폴링)</td></tr>
-          <tr><td style="color:var(--dim)">진입 1</td><td>BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 신규 진입 차단</td></tr>
+          <tr><td style="width:120px;color:var(--dim)">운용 구조</td><td><b>웹소켓 1개 공유 · 3개 독립 계좌 병렬</b> — 계좌별 잔고·포지션·전적·쿨다운 분리 (v3.0: 단일 계좌)</td></tr>
+          <tr><td style="color:var(--dim)">계좌 ①</td><td><b>3,000만↑</b> 보수형 · 대형 슈팅 — 15초 거래대금 <b>≥ 30,000,000원</b></td></tr>
+          <tr><td style="color:var(--dim)">계좌 ②</td><td><b>1,000만↑</b> 균형형 · 중형 슈팅 — 15초 거래대금 <b>≥ 10,000,000원</b></td></tr>
+          <tr><td style="color:var(--dim)">계좌 ③</td><td><b>300만↑</b> 공격형 · 초민감 스캘핑 — 15초 거래대금 <b>≥ 3,000,000원</b></td></tr>
+          <tr><td style="color:var(--dim)">진입 엔진</td><td>업비트 <b>WebSocket 체결(trade) 스트림</b> — <b>1.5초</b> 주기 판단</td></tr>
+          <tr><td style="color:var(--dim)">진입 1</td><td>BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 신규 진입 차단 (3계좌 공통)</td></tr>
           <tr><td style="color:var(--dim)">진입 2</td><td>최근 15초 거래대금 ≥ 직전 3분 평균 15초 거래대금 <b>× 4.0</b></td></tr>
-          <tr><td style="color:var(--dim)">진입 3</td><td>최근 15초 거래대금 <b>≥ 3,000만 원</b> (저유동성 틱 튐 배제)</td></tr>
+          <tr><td style="color:var(--dim)">진입 3</td><td>최근 15초 거래대금 <b>≥ 계좌별 문턱</b> (3,000만 / 1,000만 / 300만)</td></tr>
           <tr><td style="color:var(--dim)">진입 4</td><td>최근 15초 매수 체결(BID) 금액 비율 <b>≥ 70%</b></td></tr>
           <tr><td style="color:var(--dim)">진입 5</td><td>3분 전 가격 대비 <b>+0.3% ~ +3.0%</b> (초입만, 뒷북 추격 차단)</td></tr>
-          <tr><td style="color:var(--dim)">청산</td><td>목표 <b>+2.5%</b> · 트레일링 <b>+1.5% 도달 후 고점 대비 -0.4%</b> · 손절 <b>-1.8%(5분 쿨다운)</b> · 최대 보유 <b>20분</b> — 1.5초 틱 감시</td></tr>
+          <tr><td style="color:var(--dim)">청산</td><td>목표 <b>+2.5%</b> · 트레일링 <b>+1.5% 도달 후 고점 대비 -0.4%</b> · 손절 <b>-1.8%(5분 쿨다운)</b> · 최대 보유 <b>20분</b> — 계좌별 1.5초 틱 감시</td></tr>
           <tr><td style="color:var(--dim)">체결 가정</td><td>목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%</td></tr>
-          <tr><td style="color:var(--dim)">자금</td><td>가용 현금 100% 단일 포지션 · 손절 후 5분 쿨다운</td></tr>
+          <tr><td style="color:var(--dim)">자금</td><td>계좌별 가용 현금 100% 단일 포지션 · <b>손절 쿨다운도 계좌별 독립</b></td></tr>
         </tbody>
       </table>
     </div>
 
-    <h2>📜 v3.0 매매 기록</h2>
+    <h2>📜 v3.1 매매 기록 <span class="small" id="tradeFilterLabel" style="font-weight:500">— 통합</span></h2>
     <div class="card" style="padding:8px 6px">
       <div class="scroll">
         <table>
-          <thead><tr><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th>진입가</th><th>청산가</th><th>손익%</th><th>손익(원)</th><th>사유</th></tr></thead>
-          <tbody id="tradeBody"><tr><td colspan="9" class="neu" style="padding:14px">v3.0은 200만 원 신규 시드로 깨끗하게 시작합니다 (0전 0승 0패).</td></tr></tbody>
+          <thead><tr><th>계좌</th><th>구분</th><th>종목</th><th>진입</th><th>청산</th><th>진입가</th><th>청산가</th><th>손익%</th><th>손익(원)</th><th>사유</th></tr></thead>
+          <tbody id="tradeBody"><tr><td colspan="10" class="neu" style="padding:14px">3계좌 × 200만 원 신규 시드로 0전 0승 0패 시작</td></tr></tbody>
         </table>
       </div>
     </div>
@@ -220,7 +255,7 @@
   </section>
 
   <footer>
-    가상 자금(모의 시드) 운용 대시보드 · 실계좌·실주문 없음<br>
+    가상 자금(모의 시드 3계좌 × 200만 원) 운용 대시보드 · 실계좌·실주문 없음<br>
     자체 알고리즘 설계 · Render 24/7 클라우드 · Gist 영속성
   </footer>
 </div>
@@ -230,7 +265,7 @@ const $ = id => document.getElementById(id);
 const won = n => (n==null||isNaN(n)) ? '—' : Number(n).toLocaleString('ko-KR');
 const pct = n => (n==null||isNaN(n)) ? '—' : (n>0?'+':'') + Number(n).toFixed(2) + '%';
 const cls = n => n>0 ? 'up' : (n<0 ? 'down' : 'neu');
-const esc = s => String(s==null?'':s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const esc = s => String(s==null?'':s).replace(/[&<>\"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;'}[c]));
 const money = n => {
   n = Number(n||0);
   if (Math.abs(n) >= 1e8) return (n/1e8).toFixed(2) + '억';
@@ -243,12 +278,6 @@ const priceFmt = p => {
   if (p >= 1) return p.toFixed(p >= 100 ? 1 : 2);
   return p.toFixed(4);
 };
-const ago = ts => {
-  if (!ts) return '—';
-  const s = Math.max(0, Math.round((Date.now() - new Date(ts.replace(' ','T') + '+09:00').getTime())/1000));
-  if (isNaN(s)) return '—';
-  return s < 60 ? s + '초 전' : Math.floor(s/60) + '분 전';
-};
 const holdMin = s => {
   if (!s) return '—';
   const t = new Date(String(s).replace(' ','T') + '+09:00').getTime();
@@ -257,62 +286,235 @@ const holdMin = s => {
   return m < 60 ? m.toFixed(1) + '분' : Math.floor(m/60) + '시간 ' + Math.round(m%60) + '분';
 };
 
-let current = 'v3';
+// 표시 순서: 초민감(300만) → 균형(1,000만) → 보수(3,000만)
+const DISPLAY_ORDER = ['3m','10m','30m'];
+const TIER_PILL = {'3m':'tp-agg','10m':'tp-bal','30m':'tp-con'};
+const TIER_PILL_CLASS = {'3m':'p-t3','10m':'p-t10','30m':'p-t30'};
+let selTier = 'all';
+let lastData = null;
 
 function showTab(t){
-  current = t;
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
   ['v3','v2','v1'].forEach(x => $('tab-'+x).classList.toggle('hidden', x !== t));
   if (t === 'v2') loadArchive('v2');
   if (t === 'v1') loadArchive('v1');
 }
 
+function selectTier(k){
+  selTier = k;
+  document.querySelectorAll('.chip').forEach(c => c.classList.toggle('active', c.dataset.sel === k));
+  if (lastData) renderStatus(lastData);
+}
+
+function cooldownLeft(until){
+  if (!until) return null;
+  const t = new Date(until.replace(' ','T') + '+09:00').getTime();
+  const left = t - Date.now();
+  return left > 0 ? left : 0;
+}
+function cdText(ms){
+  const m = Math.floor(ms/60000), s = Math.floor((ms%60000)/1000);
+  return `${m}분 ${s}초`;
+}
+
+function tierStatusText(t){
+  if (t.position){
+    const p = t.position;
+    const g = Number(p.unrealized_pct||0);
+    return `<b class="${cls(g)}">보유 ${esc(p.name||p.market)} ${pct(g)}</b>`;
+  }
+  const ms = cooldownLeft(t.cooldown_until);
+  if (ms) return `<b style="color:var(--amber)">쿨다운 ${cdText(ms)}</b>`;
+  if (t.status === 'BTC_FILTER_BLOCKED') return '<b style="color:var(--red)">BTC 필터 대기</b>';
+  return '<b style="color:var(--violet)">초입 대기</b>';
+}
+
+function renderTierCards(d){
+  const tiers = d.bots || {};
+  $('tierCards').innerHTML = DISPLAY_ORDER.map(k => {
+    const t = tiers[k] || {};
+    const ret = Number(t.current_ret_pct||0);
+    const tr = t.total_trades||0, w = t.wins||0;
+    const wr = tr ? (w/tr*100).toFixed(0) + '%' : '—';
+    const sel = selTier === k ? ' sel' : '';
+    const hold = t.position ? ' hold' : '';
+    return `<button class="tcard${sel}${hold}" onclick="selectTier('${k}')">
+      <div class="thead">
+        <span class="tlabel">${esc(t.label||k)}</span>
+        <span class="tpill ${TIER_PILL[k]}">${esc((t.style||'').split('·')[0].trim())}</span>
+      </div>
+      <div class="tth">${esc(t.style||'')} · 15초 ${money(t.min_short_krw)}↑</div>
+      <div class="teq mono">${won(t.current_equity)}원</div>
+      <div class="tret mono ${cls(ret)}">${pct(ret)}</div>
+      <div class="tstat">${tierStatusText(t)}<br>승률 ${wr} · ${w}승 ${t.losses||0}패 (${tr}전)</div>
+    </button>`;
+  }).join('');
+}
+
+function renderAggStrip(d){
+  const a = d.aggregate || {};
+  const ret = Number(a.ret_pct||0);
+  const tr = a.total_trades||0, w = a.wins||0;
+  const wr = tr ? (w/tr*100).toFixed(1) + '%' : '—';
+  $('aggStrip').innerHTML = `
+    <span>통합 평가자산 <b class="mono">${won(a.equity)}원</b> <span style="font-size:10.5px">/ 시드 ${won(a.initial_capital)}원</span></span>
+    <span class="sep"></span>
+    <span>통합 수익률 <b class="mono ${cls(ret)}">${pct(ret)}</b></span>
+    <span class="sep"></span>
+    <span>실현손익 <b class="mono ${cls(a.realized_pnl)}">${won(Math.round(a.realized_pnl||0))}원</b></span>
+    <span class="sep"></span>
+    <span>총 전적 <b class="mono">${tr}전 ${w}승 ${a.losses||0}패</b> (승률 ${wr})</span>
+    <span class="sep"></span>
+    <span>보유 포지션 <b class="mono">${a.active_positions||0}/3</b></span>`;
+}
+
+function posCard(t){
+  const p = t.position;
+  const entry = Number(p.entry_price), high = Number(p.highest_price||entry);
+  const cur = Number(p.last_price||p.entry_price);
+  const gain = (cur-entry)/entry*100;
+  const pnlv = (cur-entry)*Number(p.coin_qty||0);
+  const lo = -1.8, hi = 2.5;
+  const pos01 = Math.max(0, Math.min(100, ((gain - lo) / (hi - lo)) * 100));
+  return `<div class="poscard">
+    <div class="poshead">
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <span class="tag">HOLDING</span>
+        <span class="tbadge">${esc(t.label)}</span>
+        <strong style="font-size:15px">${esc(p.name||p.market)}</strong>
+        <span class="mono small">${esc(p.market)}</span>
+      </div>
+      <div class="mono ${cls(gain)}" style="font-size:18px;font-weight:800">${pct(gain)}</div>
+    </div>
+    <div class="posgrid">
+      <div class="kv"><div class="k">진입가</div><div class="v mono">${priceFmt(entry)}</div></div>
+      <div class="kv"><div class="k">현재가</div><div class="v mono">${priceFmt(cur)}</div></div>
+      <div class="kv"><div class="k">최고가</div><div class="v mono" style="color:var(--amber)">${priceFmt(high)}</div></div>
+      <div class="kv"><div class="k">보유 시간</div><div class="v mono">${holdMin(p.entry_time)}</div></div>
+      <div class="kv"><div class="k">목표 익절 (+2.5%)</div><div class="v mono" style="color:var(--green)">${priceFmt(entry*1.025)}</div></div>
+      <div class="kv"><div class="k">손절 (-1.8%)</div><div class="v mono" style="color:var(--red)">${priceFmt(entry*0.982)}</div></div>
+      <div class="kv"><div class="k">진입 근거</div><div class="v mono" style="font-size:11.5px">${esc(p.surge_ratio ? `${p.surge_ratio}배 · 매수 ${Math.round((p.bid_ratio||0)*100)}%` : '—')}</div></div>
+      <div class="kv"><div class="k">평가 손익</div><div class="v mono ${cls(pnlv)}">${won(Math.round(pnlv))}원</div></div>
+    </div>
+    <div class="bar"><i style="width:${pos01.toFixed(1)}%"></i></div>
+    <div class="small" style="margin-top:6px">현재 ${pct(gain)} · 고점 ${pct((high-entry)/entry*100)} · 손절 ${pct(lo)} ~ 목표 ${pct(hi)}</div>
+  </div>`;
+}
+
+function renderPositions(d){
+  const tiers = d.bots || {};
+  const keys = selTier === 'all' ? DISPLAY_ORDER : [selTier];
+  const cards = keys.map(k => tiers[k]).filter(t => t && t.position).map(posCard);
+  $('posCards').innerHTML = cards.join('');
+}
+
+function renderDetail(d){
+  const tiers = d.bots || {};
+  if (selTier === 'all'){
+    const a = d.aggregate || {};
+    $('lblEquity').textContent = '통합 평가 자산';
+    $('equity').textContent = won(a.equity) + '원';
+    $('seed').textContent = '3계좌 시드 ' + won(a.initial_capital) + '원';
+    $('ret').textContent = pct(a.ret_pct);
+    $('ret').className = 'v mono ' + cls(a.ret_pct);
+    $('pnl').textContent = '실현 ' + won(Math.round(a.realized_pnl||0)) + '원';
+    const holding = DISPLAY_ORDER.map(k => tiers[k]).filter(t => t && t.position).length;
+    const cooling = DISPLAY_ORDER.map(k => tiers[k]).filter(t => t && !t.position && cooldownLeft(t.cooldown_until)).length;
+    $('status').textContent = holding ? `보유 ${holding}계좌` : (cooling ? `쿨다운 ${cooling}계좌` : '전 계좌 대기');
+    $('status').style.color = holding ? 'var(--cyan)' : (cooling ? 'var(--amber)' : 'var(--violet)');
+    $('cash').textContent = '현금 ' + won(Math.round(d.cash_krw||0)) + '원';
+    const tr = a.total_trades||0, w = a.wins||0;
+    $('record').textContent = tr ? ((w/tr*100).toFixed(1) + '%') : '—';
+    $('counts').textContent = `${w}승 ${a.losses||0}패 (총 ${tr}회)`;
+  } else {
+    const t = tiers[selTier] || {};
+    const ret = Number(t.current_ret_pct||0);
+    $('lblEquity').textContent = `${t.label||selTier} 계좌 평가자산`;
+    $('equity').textContent = won(t.current_equity) + '원';
+    $('seed').textContent = '시드 ' + won(t.initial_capital) + '원 · 문턱 15초 ' + money(t.min_short_krw) + '↑';
+    $('ret').textContent = pct(ret);
+    $('ret').className = 'v mono ' + cls(ret);
+    $('pnl').textContent = '실현 ' + won(Math.round(t.total_realized_pnl||0)) + '원 · MDD ' + (t.max_drawdown_pct||0).toFixed(2) + '%';
+    $('status').innerHTML = tierStatusText(t);
+    $('status').style.color = '';
+    $('cash').textContent = t.position ? '현금 0원 (전액 투입)' : '현금 ' + won(Math.round(t.cash_krw||0)) + '원';
+    const tr = t.total_trades||0, w = t.wins||0;
+    $('record').textContent = tr ? ((w/tr*100).toFixed(1) + '%') : '—';
+    $('counts').textContent = `${w}승 ${t.losses||0}패 (총 ${tr}회)`;
+  }
+}
+
+function renderCooldowns(d){
+  const tiers = d.bots || {};
+  $('coolGrid').innerHTML = DISPLAY_ORDER.map(k => {
+    const t = tiers[k] || {};
+    const ms = cooldownLeft(t.cooldown_until);
+    let v, color, s;
+    if (ms){ v = '쿨다운 ' + cdText(ms); color = 'var(--amber)'; s = '종료 ' + (t.cooldown_until||'').slice(11); }
+    else if (t.position){ v = '포지션 보유'; color = 'var(--cyan)'; s = '쿨다운 없음'; }
+    else { v = '없음'; color = 'var(--green)'; s = '손절 시 5분'; }
+    return `<div class="card"><div class="k">${esc(t.label||k)} 손절 쿨다운</div>
+      <div class="v mono" style="font-size:14px;color:${color}">${v}</div><div class="s">${s}</div></div>`;
+  }).join('');
+}
+
+function renderScan(d){
+  const scan = d.live_scan || {top:[], scanned:0, qualified:0};
+  const rows = (scan.top||[]).map(m => {
+    const qt = m.qualified_tiers || [];
+    const badge = qt.length
+      ? qt.map(k => `<span class="pill ${TIER_PILL_CLASS[k]||'p-buy'}" style="margin-right:3px">${(d.bots&&d.bots[k]?d.bots[k].label:k)}</span>`).join('')
+      : `<span class="rej">${esc(m.reject)}</span>`;
+    return `<tr>
+      <td><b>${esc(m.name)}</b> <span class="neu mono" style="font-size:10px">${esc(m.market)}</span></td>
+      <td class="mono">${priceFmt(m.price)}</td>
+      <td class="mono">${money(m.short_krw)}원</td>
+      <td class="mono">${(m.surge_ratio||0).toFixed(1)}배</td>
+      <td class="mono ${m.bid_ratio>=0.7?'up':''}">${Math.round((m.bid_ratio||0)*100)}%</td>
+      <td class="mono ${cls(m.chg_3m_pct)}">${pct(m.chg_3m_pct)}</td>
+      <td>${badge}</td>
+    </tr>`;
+  }).join('');
+  $('scanBody').innerHTML = rows || `<tr><td colspan="7" class="neu" style="padding:14px">틱 데이터 수집 중…</td></tr>`;
+  const qbt = scan.qualified_by_tier || {};
+  $('scanSummary').textContent = `감시 ${scan.scanned||0}종목 · 진입 조건 충족 ` +
+    DISPLAY_ORDER.map(k => `${(d.bots&&d.bots[k]?d.bots[k].label:k)} ${qbt[k]||0}`).join(' / ') +
+    ` · 판단 주기 ${(d.rules&&d.rules.tick_interval_sec)||1.5}초`;
+}
+
+function renderTrades(d){
+  const all = (d.recent_trades||[]).slice().reverse();
+  const filtered = selTier === 'all' ? all : all.filter(t => t.tier === selTier);
+  $('tradeFilterLabel').textContent = selTier === 'all' ? '— 3계좌 통합' : '— ' + ((d.bots&&d.bots[selTier]&&d.bots[selTier].label) || selTier) + ' 계좌';
+  $('tradeBody').innerHTML = filtered.length ? filtered.map(t => {
+    const isBuy = t.type === 'BUY';
+    const label = t.tier_label || (d.bots&&d.bots[t.tier]?d.bots[t.tier].label:t.tier) || '—';
+    return `<tr>
+      <td><span class="pill ${TIER_PILL_CLASS[t.tier]||'p-buy'}">${esc(label)}</span></td>
+      <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
+      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:10px">${esc(t.market)}</span></td>
+      <td class="mono neu" style="font-size:11px">${esc((t.entry_time||'').slice(5))}</td>
+      <td class="mono neu" style="font-size:11px">${esc((t.exit_time||'—').slice(5))}</td>
+      <td class="mono">${priceFmt(t.entry_price)}</td>
+      <td class="mono">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
+      <td class="mono ${cls(t.gain_pct)}">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
+      <td class="mono ${cls(t.pnl_krw)}">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
+      <td class="neu" style="font-size:11px;white-space:normal;max-width:240px">${esc(t.reason||'')}</td>
+    </tr>`;
+  }).join('') : `<tr><td colspan="10" class="neu" style="padding:14px">${selTier==='all' ? '3계좌 × 200만 원 신규 시드로 0전 0승 0패 시작' : '이 계좌는 아직 체결 없음 (0전 0승 0패)'}</td></tr>`;
+}
+
 function renderStatus(d){
+  lastData = d;
   $('lastChecked').textContent = d.last_checked_time || '—';
 
-  const eq = d.current_equity, ret = d.current_ret_pct;
-  $('equity').textContent = won(eq) + '원';
-  $('seed').textContent = '시드 ' + won(d.initial_capital) + '원';
-  $('ret').textContent = pct(ret);
-  $('ret').className = 'v mono ' + cls(ret);
-  $('pnl').textContent = '실현 ' + won(Math.round(d.total_realized_pnl||0)) + '원 · MDD ' + (d.max_drawdown_pct||0).toFixed(2) + '%';
-
-  const pos = d.position;
-  $('status').textContent = pos ? '포지션 보유' : (d.cooldown_until ? '쿨다운 대기' : '초입 대기');
-  $('status').style.color = pos ? 'var(--cyan)' : (d.cooldown_until ? 'var(--amber)' : 'var(--violet)');
-  $('cash').textContent = pos ? '현금 0원 (전액 투입)' : '현금 ' + won(Math.round(d.cash_krw||0)) + '원';
-
-  const tr = d.total_trades||0, w = d.wins||0, l = d.losses||0;
-  $('record').textContent = tr ? ((w/tr*100).toFixed(1) + '%') : '—';
-  $('counts').textContent = `${w}승 ${l}패 (총 ${tr}회)`;
-
-  // position card
-  if (pos){
-    $('posCard').classList.remove('hidden');
-    $('posName').textContent = pos.name || pos.market;
-    $('posMarket').textContent = pos.market;
-    const entry = Number(pos.entry_price), high = Number(pos.highest_price||entry);
-    const cur = Number(pos.last_price||pos.entry_price);
-    const gain = (cur-entry)/entry*100;
-    $('posEntry').textContent = priceFmt(entry) + '원';
-    $('posNow').textContent = priceFmt(cur) + '원';
-    $('posHigh').textContent = priceFmt(high) + '원';
-    $('posHold').textContent = holdMin(pos.entry_time);
-    $('posTp').textContent = priceFmt(entry*1.025) + '원';
-    $('posSl').textContent = priceFmt(entry*0.982) + '원';
-    $('posWhy').textContent = pos.surge_ratio ? `${pos.surge_ratio}배 · 매수 ${Math.round((pos.bid_ratio||0)*100)}% · ${pct(pos.chg_3m_pct)}` : '—';
-    const pnlv = (cur-entry)*Number(pos.coin_qty||0);
-    $('posPnl').textContent = won(Math.round(pnlv)) + '원';
-    $('posPnl').className = 'v mono ' + cls(pnlv);
-    $('posGain').textContent = pct(gain);
-    $('posGain').className = 'mono ' + cls(gain);
-    const lo = -1.8, hi = 2.5;
-    const pos01 = Math.max(0, Math.min(100, ((gain - lo) / (hi - lo)) * 100));
-    $('posBar').style.width = pos01.toFixed(1) + '%';
-    $('posBarLabel').textContent = `현재 ${pct(gain)} · 고점 ${pct((high-entry)/entry*100)} · 손절 ${pct(lo)} ~ 목표 ${pct(hi)}`;
-  } else {
-    $('posCard').classList.add('hidden');
-  }
+  renderTierCards(d);
+  renderAggStrip(d);
+  renderDetail(d);
+  renderPositions(d);
+  renderCooldowns(d);
+  renderScan(d);
+  renderTrades(d);
 
   // ws
   const ws = d.ws || {};
@@ -331,39 +533,13 @@ function renderStatus(d){
       ? `WS LIVE · ${ws.ws_markets_count||0}마켓 · ${(ws.ws_ticks_per_sec||0).toFixed(1)}틱/초`
       : 'WS 끊김 · 재연결 중');
 
-  // scan table
-  const scan = d.live_scan || {top:[], scanned:0, qualified:0};
-  const rows = (scan.top||[]).map(m => {
-    const q = m.qualified;
-    return `<tr>
-      <td><b>${esc(m.name)}</b> <span class="neu mono" style="font-size:10px">${esc(m.market)}</span></td>
-      <td class="mono">${priceFmt(m.price)}</td>
-      <td class="mono">${money(m.short_krw)}원</td>
-      <td class="mono">${(m.surge_ratio||0).toFixed(1)}배</td>
-      <td class="mono ${m.bid_ratio>=0.7?'up':''}">${Math.round((m.bid_ratio||0)*100)}%</td>
-      <td class="mono ${cls(m.chg_3m_pct)}">${pct(m.chg_3m_pct)}</td>
-      <td>${q ? '<span class="pill p-buy">진입 대상</span>' : `<span class="rej">${esc(m.reject)}</span>`}</td>
-    </tr>`;
-  }).join('');
-  $('scanBody').innerHTML = rows || `<tr><td colspan="7" class="neu" style="padding:14px">틱 데이터 수집 중…</td></tr>`;
-  $('scanSummary').textContent = `감시 ${scan.scanned||0}종목 · 조건 충족 ${scan.qualified||0}종목 · 판단 주기 ${(d.rules&&d.rules.tick_interval_sec)||1.5}초`;
-
-  // filters
+  // btc / gist
   const btc = d.btc_trend || {};
   if (btc.trend){
     const bear = btc.is_bearish;
-    $('btcTrend').textContent = bear ? '하락 (진입 차단)' : (btc.trend === 'BULLISH' ? '상승 (진입 허용)' : '중립 (진입 허용)');
+    $('btcTrend').textContent = bear ? '하락 (3계좌 진입 차단)' : (btc.trend === 'BULLISH' ? '상승 (진입 허용)' : '중립 (진입 허용)');
     $('btcTrend').style.color = bear ? 'var(--red)' : 'var(--green)';
     $('btcDetail').textContent = `BTC ${won(btc.btc_price)}원 · 20이평 대비 ${pct(btc.diff_pct)}`;
-  }
-  if (d.cooldown_until){
-    $('cool').textContent = '쿨다운 중';
-    $('cool').style.color = 'var(--amber)';
-    $('cool').dataset.until = d.cooldown_until;
-  } else {
-    $('cool').textContent = '없음';
-    $('cool').style.color = 'var(--green)';
-    delete $('cool').dataset.until;
   }
   const p = d.persistence || {};
   $('gist').textContent = p.gist_enabled ? (p.gist_last_sync_ok === false ? '동기화 오류' : '동기화 중') : '비활성';
@@ -371,23 +547,6 @@ function renderStatus(d){
   $('gistDetail').textContent = p.gist_enabled
       ? `마지막 ${p.gist_last_sync_at ? p.gist_last_sync_at.slice(11) : '—'} · ${p.gist_pending ? '저장 대기' : '저장됨'}`
       : 'GIST_TOKEN 미설정';
-
-  // trades
-  const trades = (d.recent_trades||[]).slice().reverse();
-  $('tradeBody').innerHTML = trades.length ? trades.map(t => {
-    const isBuy = t.type === 'BUY';
-    return `<tr>
-      <td><span class="pill ${isBuy?'p-buy':'p-sell'}">${isBuy?'매수':'매도'}</span></td>
-      <td><b>${esc(t.name)}</b> <span class="neu mono" style="font-size:10px">${esc(t.market)}</span></td>
-      <td class="mono neu" style="font-size:11px">${esc((t.entry_time||'').slice(5))}</td>
-      <td class="mono neu" style="font-size:11px">${esc((t.exit_time||'—').slice(5))}</td>
-      <td class="mono">${priceFmt(t.entry_price)}</td>
-      <td class="mono">${t.exit_price?priceFmt(t.exit_price):'—'}</td>
-      <td class="mono ${cls(t.gain_pct)}">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
-      <td class="mono ${cls(t.pnl_krw)}">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
-      <td class="neu" style="font-size:11px;white-space:normal;max-width:240px">${esc(t.reason||'')}</td>
-    </tr>`;
-  }).join('') : `<tr><td colspan="9" class="neu" style="padding:14px">아직 체결 없음 — 200만 원 신규 시드로 0전 0승 0패 시작</td></tr>`;
 }
 
 async function tick(){
@@ -457,25 +616,15 @@ function renderArchive(v, a){
 
   if (v === 'v2'){
     const op = a.open_position_at_archive;
-    $('v2OpenNote').innerHTML = op ? `<div class="note">아카이브 시점 미청산 포지션: <b>${esc(op.name)} (${esc(op.market)})</b> — ${esc(op.entry_time)} ${priceFmt(op.entry_price)}원 진입, 아카이브 시세 ${priceFmt(op.price_at_archive)}원(${pct(op.unrealized_pct)}). v3.0은 200만 원 신규 시드로 리셋되므로 이 포지션은 승계되지 않으며 v2.0 실현손익에도 포함되지 않습니다.</div>` : '';
+    $('v2OpenNote').innerHTML = op ? `<div class="note">아카이브 시점 미청산 포지션: <b>${esc(op.name)} (${esc(op.market)})</b> — ${esc(op.entry_time)} ${priceFmt(op.entry_price)}원 진입, 아카이브 시세 ${priceFmt(op.price_at_archive)}원(${pct(op.unrealized_pct)}). v3.0·v3.1은 신규 시드로 리셋되므로 이 포지션은 승계되지 않으며 v2.0 실현손익에도 포함되지 않습니다.</div>` : '';
     $('v2Note').textContent = a.trade_log_note || '';
   }
 }
 
 tick();
 setInterval(tick, 2000);
-// 쿨다운 카운트다운 갱신
-setInterval(() => {
-  const el = $('cool');
-  if (el && el.dataset.until){
-    const until = new Date(el.dataset.until.replace(' ','T') + '+09:00').getTime();
-    const left = until - Date.now();
-    if (left > 0){
-      const m = Math.floor(left/60000), s = Math.floor((left%60000)/1000);
-      el.textContent = `쿨다운 ${m}분 ${s}초`;
-    } else { el.textContent = '없음'; el.style.color = 'var(--green)'; }
-  }
-}, 1000);
+// 쿨다운 카운트다운 (1초 갱신)
+setInterval(() => { if (lastData) { renderTierCards(lastData); renderCooldowns(lastData); } }, 1000);
 </script>
 </body>
 </html>

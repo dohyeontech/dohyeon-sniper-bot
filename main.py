@@ -20,8 +20,8 @@ current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
 
-from sniper_engine import (TICK_INTERVAL_SEC, ensure_v3_state, run_sniper_tick,  # noqa: E402
-                           VERSION)
+from sniper_engine import (TICK_INTERVAL_SEC, TIER_KEYS, ensure_v3_state,  # noqa: E402
+                           run_sniper_tick, VERSION)
 from persistence import load_state, sync_status  # noqa: E402
 from ws_stream import UpbitTradeStream  # noqa: E402
 
@@ -31,9 +31,9 @@ _boot = {"started_at": None, "ticks": 0, "last_error": None}
 
 
 def engine_loop():
-    """1.5초 주기 초단타 판단 루프 (단일 스레드 — 상태 경합 방지)."""
-    print(f"[Bot Engine] v{VERSION} WebSocket tick engine loop started "
-          f"(interval {TICK_INTERVAL_SEC}s).")
+    """1.5초 주기 초단타 판단 루프 (단일 스레드 — 3계좌 상태 경합 방지)."""
+    print(f"[Bot Engine] v{VERSION} multi-tier engine loop started "
+          f"(interval {TICK_INTERVAL_SEC}s, tiers {'/'.join(TIER_KEYS)}).")
     time.sleep(1.0)
     while is_running:
         t0 = time.time()
@@ -41,7 +41,7 @@ def engine_loop():
             res = run_sniper_tick(stream)
             _boot["ticks"] += 1
             print(f"[Tick {datetime.now(KST).strftime('%H:%M:%S')}] {res.get('status')} | "
-                  f"{res.get('event')} | Equity {res.get('equity'):,} KRW")
+                  f"{res.get('event')} | Total {res.get('equity'):,} KRW")
         except Exception as e:
             _boot["last_error"] = f"{type(e).__name__}: {e}"
             print(f"[Bot Engine Error] {e}")
@@ -56,11 +56,13 @@ def ws_watch_loop():
         try:
             s = stream.stats()
             st = load_state()
+            per_tier = " ".join(
+                f"{k}={((st.get('tiers') or {}).get(k) or {}).get('current_equity')}" for k in TIER_KEYS)
             print(f"[WS-STATUS] connected={s['ws_connected']} markets={s['ws_markets_count']} "
                   f"ticks/s={s['ws_ticks_per_sec']} total_ticks={s['ws_ticks_total']} "
                   f"reconnects={s['ws_reconnects']} msg_age={s['ws_message_age_sec']}s | "
                   f"equity={st.get('current_equity'):,} trades={st.get('total_trades')} | "
-                  f"gist={sync_status().get('gist_last_sync_at')}")
+                  f"tiers {per_tier} | gist={sync_status().get('gist_last_sync_at')}")
         except Exception as e:
             print(f"[WS-STATUS] log error: {e}")
         time.sleep(60)
@@ -88,7 +90,7 @@ async def lifespan(app: FastAPI):
     print("[Bot Engine] Shutting down.")
 
 
-app = FastAPI(title="도현의 테크브리프 · 실시간 스나이퍼 봇 v3.0", lifespan=lifespan)
+app = FastAPI(title="도현의 테크브리프 · 실시간 스나이퍼 봇 v3.1 (3계좌 병렬)", lifespan=lifespan)
 
 
 def _merged_status():
@@ -107,6 +109,40 @@ def _merged_status():
     data["engine_ticks"] = _boot["ticks"]
     data["engine_started_at"] = _boot["started_at"]
     data["engine_last_error"] = _boot["last_error"]
+
+    tiers = data.get("tiers") or {}
+    # 계좌별 요약 (dashboard 비교 카드용)
+    data["tier_order"] = TIER_KEYS
+    data["tier_summary"] = {
+        k: {
+            "key": k,
+            "label": (tiers.get(k) or {}).get("label"),
+            "style": (tiers.get(k) or {}).get("style"),
+            "min_short_krw": (tiers.get(k) or {}).get("min_short_krw"),
+            "status": (tiers.get(k) or {}).get("status"),
+            "current_equity": (tiers.get(k) or {}).get("current_equity"),
+            "current_ret_pct": (tiers.get(k) or {}).get("current_ret_pct"),
+            "win_rate_pct": round(((tiers.get(k) or {}).get("wins", 0) /
+                                   max((tiers.get(k) or {}).get("total_trades", 0), 1)) * 100, 1),
+            "wins": (tiers.get(k) or {}).get("wins", 0),
+            "losses": (tiers.get(k) or {}).get("losses", 0),
+            "total_trades": (tiers.get(k) or {}).get("total_trades", 0),
+            "position": (tiers.get(k) or {}).get("position"),
+            "cooldown_until": (tiers.get(k) or {}).get("cooldown_until"),
+            "last_event": (tiers.get(k) or {}).get("last_event"),
+        } for k in TIER_KEYS
+    }
+    data["bots"] = tiers  # 하위 호환 별칭
+    data["aggregate"] = {
+        "equity": data.get("current_equity"),
+        "initial_capital": data.get("initial_capital"),
+        "ret_pct": data.get("current_ret_pct"),
+        "total_trades": data.get("total_trades"),
+        "wins": data.get("wins"),
+        "losses": data.get("losses"),
+        "realized_pnl": data.get("total_realized_pnl"),
+        "active_positions": data.get("active_positions", 0),
+    }
     return data
 
 
@@ -119,12 +155,14 @@ def root():
 def health():
     state = load_state()
     ws = stream.stats()
+    tiers = state.get("tiers") or {}
     return {
         "status": "ok",
         "service": "sniper-bot",
         "version": state.get("version", "unknown"),
         "bot_status": state.get("status", "UNKNOWN"),
         "current_equity": state.get("current_equity", 0),
+        "tiers": {k: (tiers.get(k) or {}).get("current_equity") for k in TIER_KEYS},
         "ws_connected": ws["ws_connected"],
         "ws_ticks_per_sec": ws["ws_ticks_per_sec"],
         "last_checked": state.get("last_checked_time", ""),
