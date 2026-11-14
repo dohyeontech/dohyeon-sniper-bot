@@ -1,390 +1,451 @@
-import os, sys, json, time, urllib.request
+"""
+스나이퍼 봇 v3.0 — 업비트 실시간 WebSocket 체결 스트림 기반 초단타 엔진.
+
+v2.0(5분봉 60초 폴링)을 대체한다. 1.5초마다 메모리의 틱 롤링 윈도우를 계산해
+초 단위로 거래대금 폭발 초입을 포착하고, 틱 단위로 청산한다.
+
+진입 (모두 충족):
+  1) BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 진입 차단
+  2) 최근 15초 거래대금 >= 직전 3분 평균 15초 거래대금 x 4.0
+  3) 최근 15초 거래대금 >= 3,000만 원
+  4) 최근 15초 매수 체결(BID) 금액 비율 >= 70%
+  5) 3분 전 가격 대비 현재가 +0.3% ~ +3.0% (초입 구간만)
+
+청산 (1.5초 단위 틱 감시):
+  목표 +2.5% / 트레일링(+1.5% 도달 후 고점 대비 -0.4% 반락) / 손절 -1.8%(5분 쿨다운) / 20분 시간 초과
+"""
+
+import json
+import os
+import sys
+import time
+import urllib.request
 from datetime import datetime, timezone, timedelta
 
 current_dir = os.path.dirname(os.path.abspath(__file__))
 if current_dir not in sys.path:
     sys.path.append(current_dir)
-from persistence import load_state, save_state
-from scanner import scan_volume_surges, fetch_tickers, check_btc_trend
 
-FEE_RATE = 0.0005 # 0.05% Upbit fee
+from persistence import load_state, save_state, sync_status  # noqa: E402
+from scanner import check_btc_trend, fetch_tickers  # noqa: E402
 
-DEFAULT_RULES_V2 = {
-    'min_volume_surge': 2.2,             # 5분봉 거래량 2.2배 이상 폭발
-    'pullback_pct': 1.0,                 # 거래량 폭발 고점 대비 -1.0% 눌림목 진입 (고점 추격 방지)
-    'target_profit_pct': 2.8,            # 목표 익절 +2.8%
-    'trailing_stop_activation_pct': 1.8, # +1.8% 이상 상승 시 트레일링 스탑 활성화
-    'trailing_stop_drop_pct': 0.5,       # 고점 대비 0.5% 반락 시 자동 청산
-    'stop_loss_pct': -2.4,               # 기계적 손절 라인 -2.4% (노이즈 방어)
-    'max_hold_minutes': 45,              # 최대 보유 45분
-    'loss_cooldown_minutes': 15,         # 손절 후 재진입 쿨다운 15분
-    'btc_filter_enabled': True           # 비트코인 15분봉 20이평 하회 시 진입 차단
+VERSION = "3.0"
+FEE_RATE = 0.0005          # 업비트 수수료 0.05%
+TICK_INTERVAL_SEC = 1.5    # 엔진 판단 주기
+KST = timezone(timedelta(hours=9))
+
+DEFAULT_RULES_V3 = {
+    "engine": "Upbit WebSocket trade stream (tick-level)",
+    "tick_interval_sec": TICK_INTERVAL_SEC,
+    "short_window_sec": 15,               # 폭발 판정 창
+    "base_window_sec": 180,               # 3분 평균 기준 창
+    "min_surge_ratio": 4.0,               # 직전 3분 평균 15초 거래대금 대비 4.0배
+    "min_short_krw": 30_000_000,          # 최근 15초 거래대금 최소 3,000만 원
+    "min_bid_ratio": 0.70,                # 매수 체결(BID) 비율 70% 이상
+    "min_chg_pct": 0.3,                   # 3분 전 대비 +0.3% 이상
+    "max_chg_pct": 3.0,                   # 3분 전 대비 +3.0% 이하 (뒷북 추격 차단)
+    "min_coverage_sec": 60,               # 틱 윈도우 최소 관측 시간
+    "min_base_ticks": 3,                 # 직전 3분 평균 산출용 최소 체결 표본 수
+    "target_profit_pct": 2.5,
+    "trailing_activation_pct": 1.5,
+    "trailing_drop_pct": 0.4,
+    "stop_loss_pct": -1.8,
+    "max_hold_minutes": 20,
+    "loss_cooldown_minutes": 5,
+    "btc_filter_enabled": True,
+    "btc_sma_diff_threshold_pct": -0.2,
+    "gist_sync_interval_sec": 60,
+    "entry_size": "가용 현금 100%",
 }
 
-def init_sniper_bot(initial_capital=2000000):
-    now_str = datetime.now(timezone(timedelta(hours=9))).strftime('%Y-%m-%d %H:%M:%S')
-    state = {
-        'version': '2.0',
-        'status': 'WAITING_FOR_SURGE', # WAITING_FOR_SURGE or IN_POSITION
-        'initialized_at': now_str,
-        'initial_capital': initial_capital,
-        'cash_krw': float(initial_capital),
-        'position': None,
-        'pending_order': None,
-        'cooldown_until': None,
-        'btc_trend': None,
-        'total_realized_pnl': 0.0,
-        'total_trades': 0,
-        'wins': 0,
-        'losses': 0,
-        'recent_trades': [],
-        'last_checked_time': now_str,
-        'rules': DEFAULT_RULES_V2,
-        'current_equity': initial_capital,
-        'current_ret_pct': 0.0
+_btc_cache = {"ts": 0.0, "data": None}
+_rest_price_cache = {}
+
+
+def kst_now():
+    return datetime.now(KST)
+
+
+def fmt(dt):
+    return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _now_ms():
+    return int(time.time() * 1000)
+
+
+def _btc_trend_cached(ttl=30.0):
+    now = time.time()
+    if _btc_cache["data"] is None or (now - _btc_cache["ts"]) > ttl:
+        try:
+            _btc_cache["data"] = check_btc_trend()
+            _btc_cache["ts"] = now
+        except Exception as e:
+            if _btc_cache["data"] is None:
+                _btc_cache["data"] = {"is_bearish": False, "btc_price": 0, "sma20": 0,
+                                      "diff_pct": 0.0, "trend": "UNKNOWN"}
+            print(f"[Engine] BTC trend fetch failed: {e}")
+    return _btc_cache["data"]
+
+
+def _rest_price(market, ttl=2.0):
+    """웹소켓 틱이 끊긴 종목용 REST 시세 폴백 (2초 캐시)."""
+    now = time.time()
+    hit = _rest_price_cache.get(market)
+    if hit and (now - hit[1]) < ttl:
+        return hit[0]
+    try:
+        data = fetch_tickers([market])
+        if data:
+            price = float(data[0]["trade_price"])
+            _rest_price_cache[market] = (price, now)
+            return price
+    except Exception:
+        pass
+    return hit[0] if hit else None
+
+
+def new_v3_state(initial_capital=2000000):
+    now_str = fmt(kst_now())
+    return {
+        "version": VERSION,
+        "status": "WAITING_FOR_SURGE",
+        "engine": "ws_tick_v3",
+        "initialized_at": now_str,
+        "initial_capital": initial_capital,
+        "cash_krw": float(initial_capital),
+        "position": None,
+        "cooldown_until": None,
+        "btc_trend": None,
+        "total_realized_pnl": 0.0,
+        "total_trades": 0,
+        "wins": 0,
+        "losses": 0,
+        "recent_trades": [],
+        "last_checked_time": now_str,
+        "last_event": "v3.0 엔진 초기화 — 웹소켓 틱 스트림 대기",
+        "rules": DEFAULT_RULES_V3,
+        "current_equity": initial_capital,
+        "current_ret_pct": 0.0,
+        "peak_equity": initial_capital,
+        "max_drawdown_pct": 0.0,
+        "live_scan": {"scanned": 0, "qualified": 0, "top": []},
+        "exit_rules_note": {
+            "target": "목표 익절 체결가는 목표가로 계산 (틱 초과분 미반영, 보수적)",
+            "stop": "손절/트레일링/시간초과는 관측 틱 가격으로 체결 (슬리피지 반영)",
+        },
     }
-    save_state(state)
+
+
+def ensure_v3_state():
+    """Gist/로컬 상태가 v3.0이 아니면 신규 시드 200만 원으로 초기화한다."""
+    state = load_state(force_remote=True)
+    if state.get("version") != VERSION:
+        prev = state.get("version")
+        state = new_v3_state()
+        save_state(state, remote=True, force_remote=True)
+        print(f"[Engine] State reset from v{prev} -> v{VERSION} "
+              f"(initial capital {state['initial_capital']:,} KRW, 0 trades)")
+    else:
+        # 규칙 정의가 바뀌었으면 규칙만 최신화 (전적/잔고는 유지)
+        if state.get("rules") != DEFAULT_RULES_V3:
+            state["rules"] = DEFAULT_RULES_V3
+            save_state(state, remote=False)
     return state
 
-def check_position_exit_candles(pos, rules, now):
-    market = pos['market']
-    entry_price = pos['entry_price']
-    entry_dt = datetime.strptime(pos['entry_time'], '%Y-%m-%d %H:%M:%S')
-    
-    target_price = entry_price * (1 + rules.get('target_profit_pct', 2.8) / 100.0)
-    stop_price = entry_price * (1 + rules.get('stop_loss_pct', -2.4) / 100.0)
-    highest_price = max(pos.get('highest_price', entry_price), entry_price)
-    
-    url = f"https://api.upbit.com/v1/candles/minutes/1?market={market}&count=120"
-    try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
-        with urllib.request.urlopen(req, timeout=5) as res:
-            candles = list(reversed(json.loads(res.read())))
-    except Exception as e:
+
+def _position_price(state, stream):
+    pos = state["position"]
+    price = stream.last_price(pos["market"]) if stream else None
+    if price is None:
+        price = _rest_price(pos["market"])
+    return price
+
+
+def _equity(state, stream):
+    cash = float(state.get("cash_krw") or 0.0)
+    pos = state.get("position")
+    if not pos:
+        return cash
+    price = _position_price(state, stream) or pos.get("entry_price", 0)
+    return cash + float(pos.get("coin_qty", 0.0)) * float(price)
+
+
+def _close_position(state, exit_price, reason, now, exit_kind):
+    pos = state["position"]
+    entry_price = float(pos["entry_price"])
+    qty = float(pos["coin_qty"])
+    gross = qty * exit_price
+    net = gross * (1 - FEE_RATE)
+    pnl = net - float(pos["cost_krw"])
+    gain_pct = (exit_price - entry_price) / entry_price * 100.0
+
+    state["cash_krw"] = net
+    state["total_realized_pnl"] = float(state.get("total_realized_pnl", 0.0)) + pnl
+    state["total_trades"] = int(state.get("total_trades", 0)) + 1
+    if pnl > 0:
+        state["wins"] = int(state.get("wins", 0)) + 1
+    else:
+        state["losses"] = int(state.get("losses", 0)) + 1
+        if exit_kind == "STOP_LOSS":
+            mins = state["rules"].get("loss_cooldown_minutes", 5)
+            state["cooldown_until"] = fmt(now + timedelta(minutes=mins))
+
+    state["recent_trades"].append({
+        "type": "SELL",
+        "market": pos["market"],
+        "name": pos.get("name", pos["market"]),
+        "entry_time": pos.get("entry_time"),
+        "exit_time": fmt(now),
+        "entry_price": entry_price,
+        "exit_price": round(exit_price, 8),
+        "gain_pct": round(gain_pct, 2),
+        "pnl_krw": round(pnl),
+        "hold_min": round((_now_ms() - int(pos.get("entry_ts_ms") or _now_ms())) / 60000.0, 1),
+        "reason": reason,
+        "exit_kind": exit_kind,
+    })
+    state["position"] = None
+    state["status"] = "WAITING_FOR_SURGE"
+    return pnl, gain_pct
+
+
+def _check_exit(state, stream, now):
+    """보유 포지션 틱 단위 청산 판정. 반환: (exit_price, reason, exit_kind) 또는 None"""
+    pos = state["position"]
+    rules = state["rules"]
+    price = _position_price(state, stream)
+    if not price:
         return None
-        
-    for c in candles:
-        cdt = datetime.strptime(c['candle_date_time_kst'].replace('T', ' '), '%Y-%m-%d %H:%M:%S')
-        if cdt <= entry_dt:
-            continue
-            
-        high = c['high_price']
-        low = c['low_price']
-        close = c['trade_price']
-        open_p = c['opening_price']
-        
-        if high > highest_price:
-            highest_price = high
-            
-        minutes_held = (cdt - entry_dt).total_seconds() / 60.0
-        
-        # 1. Stop loss check
-        if low <= stop_price:
-            exit_price = stop_price if open_p > stop_price else open_p
-            gain_pct = (exit_price - entry_price) / entry_price * 100.0
-            return {
-                'exit_time': cdt.strftime('%Y-%m-%d %H:%M:%S'),
-                'exit_price': exit_price,
-                'gain_pct': gain_pct,
-                'reason': f"🛑 기계적 손절 발동 ({gain_pct:.2f}%)"
-            }
-            
-        # 2. Target profit check
-        if high >= target_price:
-            exit_price = target_price if open_p < target_price else open_p
-            gain_pct = (exit_price - entry_price) / entry_price * 100.0
-            return {
-                'exit_time': cdt.strftime('%Y-%m-%d %H:%M:%S'),
-                'exit_price': exit_price,
-                'gain_pct': gain_pct,
-                'reason': f"🎯 목표 익절 달성 (+{gain_pct:.2f}%)"
-            }
-            
-        # 3. Trailing stop check
-        act_gain = (highest_price - entry_price) / entry_price * 100.0
-        if act_gain >= rules.get('trailing_stop_activation_pct', 1.8):
-            pullback = (close - highest_price) / highest_price * 100.0
-            if pullback <= -rules.get('trailing_stop_drop_pct', 0.5):
-                exit_price = close
-                gain_pct = (exit_price - entry_price) / entry_price * 100.0
-                return {
-                    'exit_time': cdt.strftime('%Y-%m-%d %H:%M:%S'),
-                    'exit_price': exit_price,
-                    'gain_pct': gain_pct,
-                    'reason': f"🛡️ 트레일링 스탑 익절 (+{gain_pct:.2f}%, 고점대비 {pullback:.2f}%)"
-                }
-                
-        # 4. Max hold minutes check
-        max_mins = rules.get('max_hold_minutes', 45)
-        if minutes_held >= max_mins:
-            exit_price = close
-            gain_pct = (exit_price - entry_price) / entry_price * 100.0
-            return {
-                'exit_time': cdt.strftime('%Y-%m-%d %H:%M:%S'),
-                'exit_price': exit_price,
-                'gain_pct': gain_pct,
-                'reason': f"⏱️ {max_mins}분 보유 제한 초과 청산 ({gain_pct:+.2f}%)"
-            }
-            
-    pos['highest_price'] = highest_price
+    entry = float(pos["entry_price"])
+
+    high = max(float(pos.get("highest_price") or entry), price)
+    pos["highest_price"] = high
+
+    gain = (price - entry) / entry * 100.0
+    pos["last_price"] = price
+    pos["unrealized_pct"] = round(gain, 2)
+    high_gain = (high - entry) / entry * 100.0
+    entry_ts = int(pos.get("entry_ts_ms") or _now_ms())
+    held_min = (_now_ms() - entry_ts) / 60000.0
+
+    stop_price = entry * (1 + rules["stop_loss_pct"] / 100.0)
+    target_price = entry * (1 + rules["target_profit_pct"] / 100.0)
+
+    # 1) 기계적 손절 (관측 가격 체결)
+    if price <= stop_price:
+        return price, f"🛑 기계적 손절 발동 ({gain:.2f}%) · {rules['loss_cooldown_minutes']}분 쿨다운", "STOP_LOSS"
+
+    # 2) 목표 익절 (목표가 체결, 보수적)
+    if price >= target_price:
+        tg = (target_price - entry) / entry * 100.0
+        return target_price, f"🎯 목표 익절 달성 (+{tg:.2f}%)", "TARGET"
+
+    # 3) 트레일링 스탑
+    if high_gain >= rules["trailing_activation_pct"]:
+        drop = (price - high) / high * 100.0
+        if drop <= -rules["trailing_drop_pct"]:
+            return price, (f"🛡️ 트레일링 스탑 청산 ({gain:+.2f}%, "
+                           f"고점 {high_gain:+.2f}% 대비 {drop:.2f}%)"), "TRAILING"
+
+    # 4) 최대 보유 시간
+    if held_min >= rules["max_hold_minutes"]:
+        return price, f"⏱️ {rules['max_hold_minutes']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
+
     return None
 
-def build_return(state, event):
+
+def _evaluate_market(stream, market, rules, now_ms):
+    m = stream.market_metrics(market, now_ms, rules["short_window_sec"], rules["base_window_sec"])
+    if not m:
+        return None
+    reasons = []
+    if m["coverage_sec"] < rules["min_coverage_sec"]:
+        reasons.append(f"관측 {m['coverage_sec']:.0f}s < {rules['min_coverage_sec']}s")
+    if m["base_krw"] <= 0 or m["base_ticks"] < rules["min_base_ticks"]:
+        reasons.append(f"기준 표본 부족({m['base_ticks']}틱)")
+    if m["short_krw"] < rules["min_short_krw"]:
+        reasons.append(f"15초 거래대금 {m['short_krw']/1e4:.0f}만 < {rules['min_short_krw']/1e4:.0f}만")
+    if m["surge_ratio"] < rules["min_surge_ratio"]:
+        reasons.append(f"폭발배수 {m['surge_ratio']:.1f}x < {rules['min_surge_ratio']:.1f}x")
+    if m["bid_ratio"] < rules["min_bid_ratio"]:
+        reasons.append(f"매수비율 {m['bid_ratio']*100:.0f}% < {rules['min_bid_ratio']*100:.0f}%")
+    if m["chg_3m_pct"] < rules["min_chg_pct"]:
+        reasons.append(f"3분변동 {m['chg_3m_pct']:+.2f}% < +{rules['min_chg_pct']}%")
+    if m["chg_3m_pct"] > rules["max_chg_pct"]:
+        reasons.append(f"3분변동 {m['chg_3m_pct']:+.2f}% > +{rules['max_chg_pct']}% (뒷북)")
+    m["qualified"] = not reasons
+    m["reject"] = " · ".join(reasons) if reasons else "진입 조건 충족"
+    return m
+
+
+def _enter(state, stream, m, now):
+    market = m["market"]
+    name = (stream.names().get(market) if stream else None) or market.replace("KRW-", "")
+    invest = float(state["cash_krw"])
+    if invest <= 0:
+        return None
+    net = invest * (1 - FEE_RATE)
+    price = float(m["last_price"])
+    qty = net / price
+    state["position"] = {
+        "market": market,
+        "name": name,
+        "entry_price": price,
+        "highest_price": price,
+        "coin_qty": qty,
+        "cost_krw": invest,
+        "entry_time": fmt(now),
+        "entry_ts_ms": _now_ms(),
+        "entry_type": "WS_TICK_SURGE",
+        "surge_ratio": round(m["surge_ratio"], 2),
+        "bid_ratio": round(m["bid_ratio"], 3),
+        "chg_3m_pct": round(m["chg_3m_pct"], 2),
+        "short_krw": round(m["short_krw"]),
+        "last_price": price,
+        "unrealized_pct": 0.0,
+    }
+    state["cash_krw"] = 0.0
+    state["status"] = "IN_POSITION"
+    state["recent_trades"].append({
+        "type": "BUY",
+        "market": market,
+        "name": name,
+        "entry_time": fmt(now),
+        "entry_price": price,
+        "cost_krw": round(invest),
+        "surge_ratio": round(m["surge_ratio"], 2),
+        "bid_ratio": round(m["bid_ratio"], 3),
+        "short_krw": round(m["short_krw"]),
+        "chg_3m_pct": round(m["chg_3m_pct"], 2),
+        "reason": (f"⚡ 15초 거래대금 {m['short_krw']/1e4:,.0f}만원 · 직전3분 대비 "
+                   f"{m['surge_ratio']:.1f}배 · 매수 {m['bid_ratio']*100:.0f}% · 3분변동 {m['chg_3m_pct']:+.2f}%"),
+    })
+    return market
+
+
+def run_sniper_tick(stream=None):
+    state = load_state()
+    if state.get("version") != VERSION:
+        state = ensure_v3_state()
+
+    rules = state.get("rules") or DEFAULT_RULES_V3
+    now = kst_now()
+    now_ms = _now_ms()
+    state["last_checked_time"] = fmt(now)
+    event = None
+
+    # ---------- 1. 보유 포지션: 틱 단위 청산 감시 ----------
+    if state.get("position"):
+        exit_hit = _check_exit(state, stream, now)
+        if exit_hit:
+            price, reason, kind = exit_hit
+            pnl, gain = _close_position(state, price, reason, now, kind)
+            event = f"SELL {state['recent_trades'][-1]['market']} {gain:+.2f}% / {pnl:+,.0f}원"
+        else:
+            pos = state["position"]
+            cur = _position_price(state, stream)
+            if cur:
+                pos["last_price"] = cur
+            gain = ((cur - pos["entry_price"]) / pos["entry_price"] * 100.0) if cur else 0.0
+            pos["unrealized_pct"] = round(gain, 2)
+            event = f"HOLDING {pos.get('name')}({pos['market']}) {gain:+.2f}%"
+
+    # ---------- 2. 현금 보유: 쿨다운 / BTC 필터 / 초입 포착 ----------
+    else:
+        if state.get("cooldown_until"):
+            try:
+                cd = datetime.strptime(state["cooldown_until"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+                if now < cd:
+                    rem = int((cd - now).total_seconds())
+                    event = f"⏳ 손절 쿨다운 {rem // 60}분 {rem % 60}초 남음"
+                else:
+                    state["cooldown_until"] = None
+            except Exception:
+                state["cooldown_until"] = None
+
+        btc = _btc_trend_cached()
+        state["btc_trend"] = btc
+        if event is None and rules.get("btc_filter_enabled", True) and btc.get("is_bearish"):
+            event = f"🛑 BTC 15분봉 20이평 하회 ({btc.get('diff_pct', 0):+.2f}%) — 신규 진입 차단"
+
+        if event is None and stream is not None:
+            markets = stream.markets()
+            evaluated = []
+            for market in markets:
+                m = _evaluate_market(stream, market, rules, now_ms)
+                if m:
+                    evaluated.append(m)
+            qualified = [m for m in evaluated if m["qualified"]]
+            solid = [m for m in evaluated if m["base_krw"] > 0 and m["base_ticks"] >= 3]
+            top = sorted(solid, key=lambda x: x["surge_ratio"], reverse=True)[:6]
+            state["live_scan"] = {
+                "scanned": len(evaluated),
+                "qualified": len(qualified),
+                "top": [{
+                    "market": m["market"],
+                    "name": (stream.names().get(m["market"]) or m["market"]).replace("KRW-", ""),
+                    "price": m["last_price"],
+                    "short_krw": round(m["short_krw"]),
+                    "surge_ratio": round(m["surge_ratio"], 2),
+                    "bid_ratio": round(m["bid_ratio"], 3),
+                    "chg_3m_pct": round(m["chg_3m_pct"], 2),
+                    "qualified": m["qualified"],
+                    "reject": m["reject"],
+                } for m in top],
+            }
+            if qualified:
+                best = max(qualified, key=lambda x: (x["surge_ratio"], x["short_krw"]))
+                market = _enter(state, stream, best, now)
+                if market:
+                    event = (f"⚡ BUY {best['market']} {best['surge_ratio']:.1f}배 "
+                             f"매수 {best['bid_ratio']*100:.0f}% 3분변동 {best['chg_3m_pct']:+.2f}%")
+            elif event is None:
+                best = top[0] if top else None
+                if best:
+                    event = (f"🔍 초입 포착 대기 (최대 {best['surge_ratio']:.1f}배 · "
+                             f"매수 {best['bid_ratio']*100:.0f}%)")
+                else:
+                    event = "🔍 웹소켓 틱 수신 대기"
+
+    # ---------- 3. 평가 자산 / 전적 정리 ----------
+    if len(state.get("recent_trades", [])) > 40:
+        state["recent_trades"] = state["recent_trades"][-40:]
+
+    equity = _equity(state, stream)
+    state["current_equity"] = round(equity)
+    state["current_ret_pct"] = round(
+        ((equity - state["initial_capital"]) / state["initial_capital"]) * 100, 2)
+    state["peak_equity"] = max(float(state.get("peak_equity") or state["initial_capital"]), equity)
+    dd = (state["peak_equity"] - equity) / state["peak_equity"] * 100 if state["peak_equity"] else 0.0
+    state["max_drawdown_pct"] = round(max(float(state.get("max_drawdown_pct") or 0.0), dd), 2)
+    state["last_event"] = event
+
+    trade_event = event is not None and (event.startswith("BUY") or event.startswith("SELL"))
+    save_state(state, remote=True, force_remote=trade_event)
+
     return {
-        'status': state['status'],
-        'event': event,
-        'equity': state.get('current_equity', 0),
-        'ret_pct': state.get('current_ret_pct', 0.0),
-        'cash': round(state.get('cash_krw', 0.0)),
-        'trades': state.get('total_trades', 0),
-        'wins': state.get('wins', 0),
-        'losses': state.get('losses', 0),
-        'btc_trend': state.get('btc_trend', {})
+        "status": state["status"],
+        "event": event,
+        "equity": state["current_equity"],
+        "ret_pct": state["current_ret_pct"],
+        "cash": round(float(state["cash_krw"])),
+        "trades": state["total_trades"],
+        "wins": state["wins"],
+        "losses": state["losses"],
+        "btc_trend": state.get("btc_trend"),
     }
 
-def run_sniper_tick():
-    state = load_state()
-        
-    now = datetime.now(timezone(timedelta(hours=9)))
-    now_str = now.strftime('%Y-%m-%d %H:%M:%S')
-    state['last_checked_time'] = now_str
-    
-    # Ensure v1_archive is present in state
-    if 'v1_archive' not in state:
-        archive_path = os.path.join(current_dir, 'v1_archive.json')
-        if os.path.exists(archive_path):
-            try:
-                with open(archive_path, 'r', encoding='utf-8') as f:
-                    state['v1_archive'] = json.load(f)
-            except Exception:
-                pass
-    if state.get('version') != '2.0' or state.get('rules', {}).get('stop_loss_pct') == -1.2:
-        state['version'] = '2.0'
-        state['rules'] = DEFAULT_RULES_V2
-        if 'pending_order' not in state:
-            state['pending_order'] = None
-        if 'cooldown_until' not in state:
-            state['cooldown_until'] = None
-        print("[Sniper Engine] Upgraded live state to v2.0 (Pullback & BTC Filter & SL -2.4%)")
-        
-    event = None
-    
-    # CASE 1: Currently Holding Position -> Check Exit
-    if state['position'] is not None:
-        pos = state['position']
-        market = pos['market']
-        entry_price = pos['entry_price']
-        coin_qty = pos['coin_qty']
-        
-        exit_result = check_position_exit_candles(pos, state['rules'], now)
-        
-        if exit_result:
-            exit_price = exit_result['exit_price']
-            cur_gain_pct = exit_result['gain_pct']
-            exit_reason = exit_result['reason']
-            exit_time_str = exit_result['exit_time']
-            
-            gross_sell_krw = coin_qty * exit_price
-            net_sell_krw = gross_sell_krw * (1 - FEE_RATE)
-            pnl_krw = net_sell_krw - pos['cost_krw']
-            
-            state['cash_krw'] = net_sell_krw
-            state['total_realized_pnl'] += pnl_krw
-            state['total_trades'] += 1
-            if pnl_krw > 0:
-                state['wins'] += 1
-            else:
-                state['losses'] += 1
-                # Enforce cooldown on loss to prevent churn
-                cd_mins = state['rules'].get('loss_cooldown_minutes', 15)
-                state['cooldown_until'] = (now + timedelta(minutes=cd_mins)).strftime('%Y-%m-%d %H:%M:%S')
-                
-            trade_log = {
-                'type': 'SELL',
-                'market': market,
-                'name': pos['name'],
-                'entry_time': pos['entry_time'],
-                'exit_time': exit_time_str,
-                'entry_price': entry_price,
-                'exit_price': exit_price,
-                'gain_pct': round(cur_gain_pct, 2),
-                'pnl_krw': round(pnl_krw),
-                'reason': exit_reason
-            }
-            state['recent_trades'].append(trade_log)
-            state['position'] = None
-            state['status'] = 'WAITING_FOR_SURGE'
-            event = f"SELL executed: {exit_reason} | PnL: {pnl_krw:+,.0f}원"
-        else:
-            # Still holding, update highest price
-            t_data = fetch_tickers([market])
-            if t_data:
-                cur_price = t_data[0]['trade_price']
-                pos['highest_price'] = max(pos.get('highest_price', entry_price), cur_price)
-            event = f"HOLDING: {pos['name']}({market}) 포지션 유지 중"
-            
-    # CASE 2: Holding 100% Cash -> Process Cooldown / BTC Filter / Pullback Entry
-    else:
-        # 1. Cooldown check
-        if state.get('cooldown_until'):
-            try:
-                cd_dt = datetime.strptime(state['cooldown_until'], '%Y-%m-%d %H:%M:%S')
-                if now < cd_dt:
-                    rem_sec = int((cd_dt - now).total_seconds())
-                    event = f"⏳ 손절 후 쿨다운 대기 중 ({rem_sec//60}분 {rem_sec%60}초 남음) - 연쇄 손절 방지"
-                else:
-                    state['cooldown_until'] = None
-            except Exception:
-                state['cooldown_until'] = None
 
-        # 2. BTC Trend Filter check
-        btc_info = check_btc_trend()
-        state['btc_trend'] = btc_info
-        btc_filter_on = state['rules'].get('btc_filter_enabled', True)
-        
-        if event is None and btc_filter_on and btc_info['is_bearish']:
-            event = f"🛑 BTC 15분봉 하락 추세 (BTC {btc_info['diff_pct']:+.2f}%) - 알트 신규 진입 차단"
-
-        # 3. Process Pending Pullback Order
-        if event is None and state.get('pending_order'):
-            p_order = state['pending_order']
-            try:
-                exp_dt = datetime.strptime(p_order['expires_at'], '%Y-%m-%d %H:%M:%S')
-                if now > exp_dt:
-                    event = f"⏱️ {p_order['name']}({p_order['market']}) 눌림목 대기 시간(10분) 만료로 취소"
-                    state['pending_order'] = None
-                else:
-                    market = p_order['market']
-                    target_p = p_order['target_price']
-                    dump_limit_p = p_order['surge_high'] * 0.970
-                    
-                    t_data = fetch_tickers([market])
-                    if t_data:
-                        cur_p = t_data[0]['trade_price']
-                        if cur_p <= target_p and cur_p >= dump_limit_p:
-                            # Touch pullback target -> BUY!
-                            entry_price = cur_p
-                            invest_krw = state['cash_krw']
-                            net_invest_krw = invest_krw * (1 - FEE_RATE)
-                            coin_qty = net_invest_krw / entry_price
-                            
-                            state['position'] = {
-                                'market': market,
-                                'name': p_order['name'],
-                                'entry_price': entry_price,
-                                'highest_price': entry_price,
-                                'coin_qty': coin_qty,
-                                'cost_krw': invest_krw,
-                                'entry_time': now_str,
-                                'surge_ratio': p_order['surge_ratio'],
-                                'entry_type': 'PULLBACK'
-                            }
-                            state['cash_krw'] = 0.0
-                            state['status'] = 'IN_POSITION'
-                            state['pending_order'] = None
-                            
-                            trade_log = {
-                                'type': 'BUY',
-                                'market': market,
-                                'name': p_order['name'],
-                                'entry_time': now_str,
-                                'entry_price': entry_price,
-                                'cost_krw': round(invest_krw),
-                                'surge_ratio': p_order['surge_ratio'],
-                                'reason': f"🎯 -1.0% 눌림목 체결 ({entry_price:,.1f}원)"
-                            }
-                            state['recent_trades'].append(trade_log)
-                            event = f"🎯 PULLBACK BUY: {p_order['name']}({market}) -1.0% 눌림목({entry_price:,.1f}원) 체결!"
-                        elif cur_p < dump_limit_p:
-                            event = f"⚠️ {p_order['name']}({market}) -3% 이상 덤핑 감지되어 주문 자동 취소"
-                            state['pending_order'] = None
-                        elif cur_p > p_order['surge_high'] * 1.025:
-                            event = f"🚀 {p_order['name']}({market}) +2.5% 초과 급등하여 추격 방지 취소"
-                            state['pending_order'] = None
-                        else:
-                            event = f"⏳ {p_order['name']}({market}) 눌림목 대기 중 (목표: {target_p:,.1f}원 / 현재: {cur_p:,.1f}원)"
-            except Exception as e:
-                state['pending_order'] = None
-
-        # 4. Scan for Volume Surges if still waiting
-        if event is None and state['position'] is None and state.get('pending_order') is None:
-            candidates = scan_volume_surges()
-            surges = [c for c in candidates if c['is_surge']]
-            
-            if surges:
-                best = surges[0]
-                market = best['code']
-                name = best['name']
-                cur_price = best['price']
-                surge_high = max(best.get('high_price', cur_price), cur_price)
-                target_entry = surge_high * (1 - state['rules'].get('pullback_pct', 1.0) / 100.0)
-                dump_limit = surge_high * 0.970
-                
-                # If price is ALREADY in healthy pullback zone (e.g. upper shadow pullback)
-                if cur_price <= target_entry and cur_price >= dump_limit:
-                    entry_price = cur_price
-                    invest_krw = state['cash_krw']
-                    net_invest_krw = invest_krw * (1 - FEE_RATE)
-                    coin_qty = net_invest_krw / entry_price
-                    
-                    state['position'] = {
-                        'market': market,
-                        'name': name,
-                        'entry_price': entry_price,
-                        'highest_price': entry_price,
-                        'coin_qty': coin_qty,
-                        'cost_krw': invest_krw,
-                        'entry_time': now_str,
-                        'surge_ratio': best['vol_surge_ratio'],
-                        'entry_type': 'INSTANT_PULLBACK'
-                    }
-                    state['cash_krw'] = 0.0
-                    state['status'] = 'IN_POSITION'
-                    
-                    trade_log = {
-                        'type': 'BUY',
-                        'market': market,
-                        'name': name,
-                        'entry_time': now_str,
-                        'entry_price': entry_price,
-                        'cost_krw': round(invest_krw),
-                        'surge_ratio': best['vol_surge_ratio'],
-                        'reason': f"🎯 즉시 눌림목 진입 ({entry_price:,.1f}원)"
-                    }
-                    state['recent_trades'].append(trade_log)
-                    event = f"🎯 PULLBACK BUY: {name}({market}) 거래량 {best['vol_surge_ratio']}배 폭발 후 눌림목({entry_price:,.1f}원) 즉시 진입!"
-                else:
-                    # Register pending pullback order
-                    state['pending_order'] = {
-                        'market': market,
-                        'name': name,
-                        'surge_high': surge_high,
-                        'target_price': target_entry,
-                        'surge_ratio': best['vol_surge_ratio'],
-                        'created_at': now_str,
-                        'expires_at': (now + timedelta(minutes=10)).strftime('%Y-%m-%d %H:%M:%S')
-                    }
-                    event = f"⚡ 거래량 {best['vol_surge_ratio']}배 폭발: {name}({market}) 고점 {surge_high:,.1f}원 → -1% 눌림목({target_entry:,.1f}원) 대기 등록"
-            else:
-                event = "🔍 거래량 폭발 알트 스캔 중 (조건 미충족으로 대기)"
-                
-    # Keep only last 20 trade logs
-    if len(state.get('recent_trades', [])) > 20:
-        state['recent_trades'] = state['recent_trades'][-20:]
-        
-    # Calculate current total valuation
-    cur_equity = state['cash_krw']
-    if state['position'] is not None:
-        t_data = fetch_tickers([state['position']['market']])
-        if t_data:
-            cur_equity += state['position']['coin_qty'] * t_data[0]['trade_price']
-            
-    state['current_equity'] = round(cur_equity)
-    state['current_ret_pct'] = round(((cur_equity - state['initial_capital']) / state['initial_capital']) * 100, 2)
-    
-    save_state(state)
-    return build_return(state, event)
-
-if __name__ == '__main__':
-    res = run_sniper_tick()
-    print("Sniper Tick Result:", res)
+if __name__ == "__main__":
+    from ws_stream import UpbitTradeStream
+    st = UpbitTradeStream()
+    st.start()
+    secs = float(os.environ.get("V3_TEST_SECONDS", "20"))
+    t_end = time.time() + secs
+    while time.time() < t_end:
+        print(json.dumps(run_sniper_tick(st), ensure_ascii=False, default=str))
+        time.sleep(TICK_INTERVAL_SEC)
+    print("WS STATS:", json.dumps(st.stats(), ensure_ascii=False))
+    print("GIST:", json.dumps(sync_status(), ensure_ascii=False))
+    st.stop()

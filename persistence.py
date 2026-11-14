@@ -1,35 +1,38 @@
-import os, json, urllib.request
+"""
+상태 영속성 (v3.0): 메모리 캐시 + 로컬 파일 + (주기적) 비공개 Gist 동기화.
 
-STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'state.json')
+v3.0 엔진은 1.5초마다 상태를 갱신하므로
+- 읽기: 프로세스 메모리 캐시 사용 (Gist API 호출 없음, 시작 시 1회만 원격 조회)
+- 쓰기: 로컬 파일은 매번 원자적 저장, Gist는 체결/포지션 변경 시 즉시 + 그 외 60초 간격
+"""
 
-def load_state():
-    gist_token = os.environ.get('GIST_TOKEN')
-    gist_id = os.environ.get('GIST_ID')
-    
-    if gist_token and gist_id:
-        try:
-            url = f"https://api.github.com/gists/{gist_id}"
-            req = urllib.request.Request(url, headers={
-                'Authorization': f'token {gist_token}',
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'SniperBot/1.0'
-            })
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                data = json.loads(resp.read().decode())
-                content = data['files']['state.json']['content']
-                state = json.loads(content)
-                print(f"[Persistence] Successfully loaded state from Gist {gist_id}")
-                return state
-        except Exception as e:
-            print(f"[Persistence] Failed to fetch Gist: {e}. Falling back to local.")
-            
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r', encoding='utf-8') as f:
-            return json.load(f)
-            
-    # Default fallback state
+import json
+import os
+import threading
+import time
+import urllib.request
+
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
+
+GIST_SYNC_MIN_INTERVAL = 60.0   # 초 단위 최소 Gist 동기화 간격
+USER_AGENT = "SniperBot/3.0"
+
+_lock = threading.RLock()
+_state_cache = None
+_last_sync_ts = 0.0
+_last_sync_ok = None
+_last_sync_error = None
+_last_sync_at = None
+_pending = False
+
+
+def _creds():
+    return os.environ.get("GIST_TOKEN"), os.environ.get("GIST_ID")
+
+
+def _default_state():
     return {
-        "version": "1.0",
+        "version": "3.0",
         "status": "WAITING_FOR_SURGE",
         "initial_capital": 2000000,
         "cash_krw": 2000000.0,
@@ -39,44 +42,122 @@ def load_state():
         "wins": 0,
         "losses": 0,
         "recent_trades": [],
-        "rules": {
-            "min_volume_surge": 2.2,
-            "target_profit_pct": 2.0,
-            "trailing_stop_activation_pct": 1.5,
-            "trailing_stop_drop_pct": 0.5,
-            "stop_loss_pct": -1.2,
-            "max_hold_minutes": 30
-        },
         "current_equity": 2000000,
-        "current_ret_pct": 0.0
+        "current_ret_pct": 0.0,
     }
 
-def save_state(state):
-    # 1. Save local
-    with open(STATE_FILE, 'w', encoding='utf-8') as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
-        
-    # 2. Sync to Gist if credentials present
-    gist_token = os.environ.get('GIST_TOKEN')
-    gist_id = os.environ.get('GIST_ID')
-    if gist_token and gist_id:
+
+def _fetch_gist(token, gist_id, timeout=8):
+    req = urllib.request.Request(
+        f"https://api.github.com/gists/{gist_id}",
+        headers={"Authorization": f"token {token}",
+                 "Accept": "application/vnd.github.v3+json",
+                 "User-Agent": USER_AGENT})
+    with urllib.request.urlopen(req, timeout=timeout) as resp:
+        data = json.loads(resp.read().decode())
+    return json.loads(data["files"]["state.json"]["content"])
+
+
+def _write_local(state):
+    tmp = STATE_FILE + ".tmp"
+    try:
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(state, f, indent=2, ensure_ascii=False)
+        os.replace(tmp, STATE_FILE)
+    except Exception as e:
+        print(f"[Persistence] local save failed: {e}")
+
+
+def load_state(force_remote=False):
+    global _state_cache, _last_sync_error
+    with _lock:
+        if _state_cache is not None and not force_remote:
+            return _state_cache
+
+    state = None
+    token, gist_id = _creds()
+    if token and gist_id:
         try:
-            url = f"https://api.github.com/gists/{gist_id}"
-            payload = json.dumps({
-                "files": {
-                    "state.json": {
-                        "content": json.dumps(state, indent=2, ensure_ascii=False)
-                    }
-                }
-            }).encode('utf-8')
-            
-            req = urllib.request.Request(url, data=payload, headers={
-                'Authorization': f'token {gist_token}',
-                'Accept': 'application/vnd.github.v3+json',
-                'User-Agent': 'SniperBot/1.0',
-                'Content-Type': 'application/json'
-            }, method='PATCH')
-            with urllib.request.urlopen(req, timeout=5) as resp:
-                pass
+            state = _fetch_gist(token, gist_id)
+            print(f"[Persistence] Loaded state from Gist {gist_id} (version {state.get('version')})")
         except Exception as e:
-            print(f"[Persistence] Failed to sync to Gist: {e}")
+            _last_sync_error = f"load failed: {type(e).__name__}: {e}"
+            print(f"[Persistence] Gist load failed: {e} -> falling back to local file")
+
+    if state is None and os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r", encoding="utf-8") as f:
+                state = json.load(f)
+            print("[Persistence] Loaded state from local state.json")
+        except Exception as e:
+            print(f"[Persistence] local load failed: {e}")
+
+    if state is None:
+        state = _default_state()
+
+    with _lock:
+        _state_cache = state
+    return state
+
+
+def _sync_gist(state):
+    global _last_sync_ts, _last_sync_ok, _last_sync_error, _last_sync_at
+    token, gist_id = _creds()
+    if not (token and gist_id):
+        return False
+    try:
+        payload = json.dumps({"files": {"state.json": {
+            "content": json.dumps(state, indent=2, ensure_ascii=False)}}}).encode("utf-8")
+        req = urllib.request.Request(
+            f"https://api.github.com/gists/{gist_id}", data=payload, method="PATCH",
+            headers={"Authorization": f"token {token}",
+                     "Accept": "application/vnd.github.v3+json",
+                     "User-Agent": USER_AGENT,
+                     "Content-Type": "application/json"})
+        with urllib.request.urlopen(req, timeout=8) as resp:
+            resp.read()
+        _last_sync_ts = time.time()
+        _last_sync_ok = True
+        _last_sync_error = None
+        _last_sync_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        return True
+    except Exception as e:
+        _last_sync_ok = False
+        _last_sync_error = f"{type(e).__name__}: {e}"
+        print(f"[Persistence] Gist sync failed: {e}")
+        return False
+
+
+def save_state(state, remote=True, force_remote=False):
+    """로컬 저장은 항상, Gist 동기화는 force 또는 60초 간격."""
+    global _state_cache, _pending
+    with _lock:
+        _state_cache = state
+    _write_local(state)
+
+    if not remote:
+        _pending = True
+        return False
+    token, gist_id = _creds()
+    if not (token and gist_id):
+        return False
+    now = time.time()
+    if not force_remote and (now - _last_sync_ts) < GIST_SYNC_MIN_INTERVAL:
+        _pending = True
+        return False
+    ok = _sync_gist(state)
+    if ok:
+        _pending = False
+    return ok
+
+
+def sync_status():
+    token, gist_id = _creds()
+    return {
+        "gist_enabled": bool(token and gist_id),
+        "gist_id": gist_id if gist_id else None,
+        "gist_last_sync_at": _last_sync_at,
+        "gist_last_sync_ok": _last_sync_ok,
+        "gist_last_error": _last_sync_error,
+        "gist_pending": _pending,
+    }
