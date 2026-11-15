@@ -23,6 +23,14 @@
 (보유 포지션은 유지). 역추세 2전략(`panic_bounce`, `rsi_oversold`)만 `btc_filter: False`로 예외 적용되어
 BTC 하락 추세에서도 진입한다. 손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
 
+시장 전역 제외: 스테이블코인(`KRW-USDT`·`KRW-USDC`·`KRW-DAI`·`KRW-BUSD` 등)은 가격이 페그에
+고정돼 목표 익절 도달이 불가능하고 변이 0이라 밴드 수축·유동성 상위 조건만 통과해 수수료만
+누수된다. `market_filter.py` 정의 하나로 구독·1분봉 수집·신호 판정·체결에서 전면 제외하며,
+제외 대상 마켓을 보유 중이면 다음 틱에 정상 정리(청산)한다.
+
+종목별 재진입 쿨다운: `rsi_oversold`는 청산 후 같은 종목 30분 재진입 금지(떨어지는 칼날 연속
+손절 차단), `panic_bounce`는 손절 후 같은 종목 15분 재진입 금지를 둔다.
+
 청산은 1.5초 판단 루프에서 틱 가격으로 감시한다. 목표 익절은 목표가 체결(초과분 미반영,
 보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
 """
@@ -39,6 +47,9 @@ if current_dir not in sys.path:
 
 from persistence import load_state, save_state, last_load_source, gist_enabled  # noqa: E402
 from scanner import check_btc_trend, fetch_tickers  # noqa: E402
+from market_filter import (  # noqa: E402
+    is_excluded_market, STABLE_BASES, EXCLUDED_MARKETS, NOTE as MARKET_FILTER_NOTE,
+)
 
 VERSION = "4.0"
 FEE_RATE = 0.0005           # 업비트 수수료 0.05%
@@ -89,10 +100,11 @@ STRATEGIES = {
         "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
         "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
         "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
-        "exit": "목표 +2.0% · 손절 -1.5% · 최대 15분 · 쿨다운 5분",
+        "exit": "목표 +2.0% · 트레일링 +1.3%→고점 -0.35% · 손절 -1.5% · 최대 15분 · 쿨다운 5분 · 동일종목 15분",
         "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 2.0,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
-                   "max_hold_min": 15, "cooldown_min": 5},
+                   "trail_activation_pct": 1.3, "trail_drop_pct": 0.35, "stop_pct": -1.5,
+                   "max_hold_min": 15, "cooldown_min": 5,
+                   "symbol_cooldown_min": 15, "symbol_cooldown_scope": "stop"},
     },
     "pullback_reentry": {
         "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
@@ -137,12 +149,13 @@ STRATEGIES = {
     "rsi_oversold": {
         "key": "rsi_oversold", "label": "RSI 과매도", "name": "1분봉 RSI 과매도 반등",
         "style": "역추세 · 지표 반전", "kind": "rsi", "legacy": False, "btc_filter": False,
-        "entry": "1분봉 RSI(14) 25 이하 과매도에서 RSI 상향 반전 + 15초 BID 60%↑",
-        "exit": "목표 +1.8% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
-        "params": {"rsi_period": 14, "rsi_threshold": 25.0, "min_bid_ratio": 0.60,
-                   "max_candle_age_sec": 180, "target_pct": 1.8,
+        "entry": "1분봉 RSI(14) 25 이하 과매도에서 RSI 상향 반전 + 15초 BID 70%↑ + 15초 가격 반등(>0%)",
+        "exit": "목표 +1.8% · 손절 -1.5% · 최대 25분 · 쿨다운 5분 · 동일종목 30분",
+        "params": {"rsi_period": 14, "rsi_threshold": 25.0, "min_bid_ratio": 0.70,
+                   "min_rebound_pct": 0.0, "max_candle_age_sec": 180, "target_pct": 1.8,
                    "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
-                   "max_hold_min": 25, "cooldown_min": 5},
+                   "max_hold_min": 25, "cooldown_min": 5,
+                   "symbol_cooldown_min": 30, "symbol_cooldown_scope": "all"},
     },
     "bb_squeeze": {
         "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
@@ -173,6 +186,10 @@ def _rules_block():
                        "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 8전략 신규 진입 차단(보유 유지). "
                                 "역추세 2전략(투매 과매도 반등·RSI 과매도 반등)은 예외로 진입 허용"),
                        "exempt_strategies": list(BTC_FILTER_EXEMPT)},
+        "market_filter": {"stablecoin_excluded": True,
+                          "excluded_markets": sorted(EXCLUDED_MARKETS),
+                          "excluded_bases": sorted(STABLE_BASES),
+                          "note": MARKET_FILTER_NOTE},
         "candle_cache": {"top_n": 15, "refresh_sec": 60, "sleep_sec": 0.25,
                          "note": "RSI·볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 순환 수집"},
         "gist_sync_interval_sec": 60,
@@ -268,6 +285,7 @@ def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
         "cash_krw": float(seed),
         "position": None,
         "cooldown_until": None,
+        "symbol_cooldowns": {},
         "total_realized_pnl": 0.0,
         "total_trades": 0,
         "wins": 0,
@@ -331,6 +349,7 @@ def _alias_legacy(state):
 
 
 CARRY_FIELDS = ("initialized_at", "initial_capital", "cash_krw", "position", "cooldown_until",
+                "symbol_cooldowns",
                 "total_realized_pnl", "total_trades", "wins", "losses", "recent_trades",
                 "status", "last_event", "watch", "current_equity", "current_ret_pct",
                 "peak_equity", "max_drawdown_pct")
@@ -420,7 +439,9 @@ def ensure_v4_state():
             state["strategies"][k]["entry"] = STRATEGIES[k]["entry"]
             state["strategies"][k]["exit"] = STRATEGIES[k]["exit"]
             state["strategies"][k]["btc_filter"] = bool(STRATEGIES[k]["btc_filter"])
-            state["strategies"][k].setdefault("params", dict(STRATEGIES[k]["params"]))
+            # 규칙 파라미터는 코드 정의를 따른다 (새 트레일링·종목 쿨다운이 기존 상태에도 반영)
+            state["strategies"][k]["params"] = dict(STRATEGIES[k]["params"])
+            state["strategies"][k].setdefault("symbol_cooldowns", {})
         state["strategy_order"] = list(STRATEGY_KEYS)
         _alias_legacy(state)
         _aggregate(state, None)
@@ -454,6 +475,56 @@ def _strategy_equity(st, stream):
         return cash
     price = _position_price(pos, stream) or pos.get("entry_price", 0)
     return cash + float(pos.get("coin_qty", 0.0)) * float(price)
+
+
+def _parse_dt(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+    except Exception:
+        return None
+
+
+def _symbol_cooldown_until(st, market, now):
+    """전략별 '동일 종목 재진입 쿨다운'의 남은 종료 시각 문자열 (없으면 None)."""
+    boosts = st.get("symbol_cooldowns") or {}
+    if not isinstance(boosts, dict):
+        return None
+    until = boosts.get(market)
+    if not until:
+        return None
+    dt = _parse_dt(until)
+    if dt is None or now >= dt:
+        return None
+    return until
+
+
+def _prune_symbol_cooldowns(st, now):
+    """만료된 종목 쿨다운 정리 (상태가 무한정 커지는 것 방지)."""
+    boosts = st.get("symbol_cooldowns")
+    if not isinstance(boosts, dict) or not boosts:
+        return
+    st["symbol_cooldowns"] = {m: u for m, u in boosts.items()
+                              if _parse_dt(u) and _parse_dt(u) > now}
+
+
+def _set_symbol_cooldown(st, market, now, exit_kind):
+    """청산 직후 종목별 재진입 쿨다운 기록 (전략 파라미터를 따른다)."""
+    p = st.get("params") or {}
+    mins = p.get("symbol_cooldown_min")
+    scope = p.get("symbol_cooldown_scope") or "stop"
+    if not mins or not market:
+        return None
+    if scope == "stop" and exit_kind != "STOP_LOSS":
+        return None
+    if scope not in ("stop", "all"):
+        return None
+    until = fmt(now + timedelta(minutes=float(mins)))
+    boosts = st.get("symbol_cooldowns")
+    if not isinstance(boosts, dict):
+        boosts = {}
+    boosts[market] = until
+    st["symbol_cooldowns"] = boosts
+    return until
 
 
 def _close_position(st, price, reason, now, exit_kind):
@@ -496,6 +567,9 @@ def _close_position(st, price, reason, now, exit_kind):
     })
     st["position"] = None
     st["status"] = "WAITING_FOR_SIGNAL"
+    # 동일 종목 재진입 쿨다운 (rsi_oversold 30분 전 청산 / panic_bounce 15분 손절)
+    if exit_kind != "STABLE_EXIT":
+        _set_symbol_cooldown(st, pos["market"], now, exit_kind)
     return pnl, gain_pct
 
 
@@ -662,7 +736,11 @@ def _sig_major(snap, st, ctx):
 
 
 def _sig_rsi(snap, st, ctx):
-    """1분봉 RSI(14) 25 이하 과매도 → 상향 반전 + 매수 우위."""
+    """1분봉 RSI(14) 25 이하 과매도 → 상향 반전 + 매수 우위 + 15초 가격 반등.
+
+    떨어지는 칼날 방어: RSI 반전·매수 우위만으로는 급략 지속 구간에서 계속 잡히므로
+    최근 15초 가격이 직전 15초 대비 실제로 올라선 경우(>min_rebound_pct)만 진입한다.
+    """
     p = st["params"]
     c = snap.get("candles")
     if not c:
@@ -679,7 +757,15 @@ def _sig_rsi(snap, st, ctx):
         return False, f"RSI 반전 미확인 ({rsi_prev:.1f}→{rsi_now:.1f})", score
     if snap["bid_ratio"] < p["min_bid_ratio"]:
         return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", score
-    return True, (f"RSI {rsi_prev:.1f}→{rsi_now:.1f} 반전 · 매수 {snap['bid_ratio']*100:.0f}%"), score
+    min_reb = float(p.get("min_rebound_pct") or 0.0)
+    ago = snap.get("price_15s_ago")
+    if not ago:
+        return False, "15초 가격 이력 없음 (반등 미확인)", score
+    reb = (snap["last_price"] - ago) / ago * 100.0
+    if reb <= min_reb:
+        return False, f"15초 반등 {reb:+.2f}% ≤ {min_reb:+.2f}% (떨어지는 칼날)", score
+    return True, (f"RSI {rsi_prev:.1f}→{rsi_now:.1f} 반전 · 15초 반등 {reb:+.2f}% · "
+                  f"매수 {snap['bid_ratio']*100:.0f}%"), score
 
 
 def _sig_bb(snap, st, ctx):
@@ -727,11 +813,21 @@ def _attach_candles(snap):
 
 
 def _evaluate_strategy(key, snaps, ctx):
-    """전략 하나를 전체 시장 스냅샷에 적용. (최적 진입 후보, 최적 근접 후보) 반환."""
+    """전략 하나를 전체 시장 스냅샷에 적용. (최적 진입 후보, 최적 근접 후보) 반환.
+
+    · 스테이블코인 등 제외 마켓은 판정 전에 걸러낸다 (원천 차단)
+    · 전략별 '동일 종목 재진입 쿨다운' 중인 종목도 후보에서 제외한다
+    """
     st = ctx["state"]["strategies"][key]
+    now = ctx.get("now") or kst_now()
     fn = SIGNAL_FNS[STRATEGIES[key]["kind"]]
     best_ok = best_any = None
     for snap in snaps:
+        market = snap.get("market")
+        if is_excluded_market(market):
+            continue
+        if _symbol_cooldown_until(st, market, now):
+            continue
         ok, why, score = fn(snap, st, ctx)
         if ok:
             if best_ok is None or score > best_ok[0]:
@@ -743,6 +839,8 @@ def _evaluate_strategy(key, snaps, ctx):
 
 def _enter(st, snap, now, stream, why):
     market = snap["market"]
+    if is_excluded_market(market):      # 이중 안전장치 — 제외 마켓은 절대 체결하지 않는다
+        return None
     name = (stream.names().get(market) if stream else None) or market.replace("KRW-", "")
     invest = float(st["cash_krw"])
     if invest <= 0:
@@ -824,6 +922,10 @@ def _aggregate(state, stream):
         st["entry"] = STRATEGIES[key]["entry"]
         st["exit"] = STRATEGIES[key]["exit"]
         st["btc_filter"] = bool(STRATEGIES[key]["btc_filter"])
+        st["params"] = dict(STRATEGIES[key]["params"])      # 규칙 파라미터는 코드 정의를 따른다
+        if not isinstance(st.get("symbol_cooldowns"), dict):
+            st["symbol_cooldowns"] = {}
+        st["symbol_cooldown_markets"] = sorted(st["symbol_cooldowns"])
         if len(st.get("recent_trades", [])) > 40:
             st["recent_trades"] = st["recent_trades"][-40:]
 
@@ -859,6 +961,7 @@ def _aggregate(state, stream):
             "position_name": (st.get("position") or {}).get("name"),
             "unrealized_pct": (st.get("position") or {}).get("unrealized_pct"),
             "last_event": st.get("last_event"),
+            "symbol_cooldowns": dict(st.get("symbol_cooldowns") or {}),
         })
 
     board.sort(key=lambda r: (-r["ret_pct"], -r["equity"], r["key"]))
@@ -940,6 +1043,20 @@ def run_sniper_tick(stream=None):
         st = state["strategies"][key]
         if not st.get("position"):
             continue
+        pos = st["position"]
+        # 제외 마켓(스테이블코인) 보유 포지션은 규칙 평가 없이 정상 정리한다
+        if is_excluded_market(pos.get("market")):
+            price = _position_price(pos, stream)
+            if not price:
+                st["last_event"] = "⏳ 스테이블코인 포지션 정리 대기 — 시세 수신 중"
+                continue
+            pnl, gain = _close_position(
+                st, price, "🧹 제외 마켓(스테이블코인) 정리 청산", now, "STABLE_EXIT")
+            st["last_event"] = (f"🧹 {pos.get('name', pos['market'])}({pos['market']}) "
+                                f"스테이블코인 제외 → 정리 청산 {gain:+.2f}% / {pnl:+,.0f}원")
+            events.append(f"[{st['label']}] {st['last_event']}")
+            exited_now.add(key)
+            continue
         hit = _check_exit(st, stream, now)
         if hit:
             price, reason, kind = hit
@@ -967,13 +1084,16 @@ def run_sniper_tick(stream=None):
                 snaps.append(_attach_candles(snap))
 
     top_markets = set(stream.top_markets(10)) if (stream is not None and hasattr(stream, "top_markets")) else set()
-    ctx = {"state": state, "top_markets": top_markets, "btc": btc, "bearish": bearish}
+    ctx = {"state": state, "top_markets": top_markets, "btc": btc, "bearish": bearish,
+           "now": now}
 
     # ---------- 3. 전략별 신규 진입 ----------
     for key in STRATEGY_KEYS:
         st = state["strategies"][key]
         if st.get("position") or key in exited_now:
             continue
+
+        _prune_symbol_cooldowns(st, now)
 
         if st.get("cooldown_until"):
             try:
@@ -1021,7 +1141,8 @@ def run_sniper_tick(stream=None):
         } if watch else None
 
     # ---------- 4. 실시간 감시 패널 (스냅샷 재사용) ----------
-    solid = [s for s in snaps if s["base_krw"] > 0 and s["base_ticks"] >= 3]
+    solid = [s for s in snaps if s["base_krw"] > 0 and s["base_ticks"] >= 3
+             and not is_excluded_market(s.get("market"))]
     display_pool = [s for s in solid if s["short_krw"] >= 3_000_000] or \
         sorted(solid, key=lambda x: x["short_krw"], reverse=True)[:6]
     top = sorted(display_pool, key=lambda x: x["surge_ratio"], reverse=True)[:6]

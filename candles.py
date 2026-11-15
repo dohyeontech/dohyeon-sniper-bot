@@ -19,6 +19,8 @@ import time
 import urllib.request
 from datetime import datetime, timedelta, timezone
 
+from market_filter import is_excluded_market
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -113,10 +115,20 @@ class CandleCache:
     def stop(self):
         self._stop.set()
 
+    def _target_markets(self):
+        """이번 주기에 1분봉을 수집할 종목 — 스테이블코인은 제외하고 상위 top_n만."""
+        try:
+            provided = list(self.market_provider() or [])
+        except Exception as e:
+            self._last_error = f"market_provider: {type(e).__name__}: {e}"
+            return []
+        eligible = [m for m in provided if not is_excluded_market(m)]
+        return eligible[: self.top_n]
+
     def _run(self):
         while not self._stop.is_set():
             try:
-                markets = [m for m in (self.market_provider() or [])][: self.top_n]
+                markets = self._target_markets()
                 self._market_count = len(markets)
                 now = time.time()
                 did_fetch = False
@@ -140,6 +152,8 @@ class CandleCache:
                 return
 
     def _refresh(self, market):
+        if is_excluded_market(market):     # REST 호출 낭비 방지 (이중 안전장치)
+            return
         try:
             raw = _get_json(f"{CANDLE_URL}?market={market}&count={self.count}")
             self._requests += 1

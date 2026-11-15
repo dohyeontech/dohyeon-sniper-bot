@@ -231,6 +231,10 @@
     <div class="note">
       공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 모멘텀·돌파 8전략 신규 진입 차단(보유 유지).
       역추세 2전략(<b>투매 반등</b>·<b>RSI 과매도</b>)은 BTC 필터 예외로 하락 추세에서도 진입합니다.
+      <b>스테이블코인(KRW-USDT·KRW-USDC 등)은 구독·1분봉 수집·신호 판정·체결에서 전면 제외</b>합니다 — 가격이 페그에 고정돼
+      목표 익절에 닿을 수 없고 변이 0이라 밴드 수축·유동성 상위 조건만 통과해 수수료만 누수되기 때문입니다(보유 중이면 정상 정리).
+      <b>RSI 과매도</b>는 청산한 종목을 30분간 재진입하지 않고(떨어지는 칼날 방어, 15초 반등 + 매수 70% 필수),
+      <b>투매 반등</b>은 +1.3% 트레일링으로 이익을 지키며 손절한 종목은 15분간 재진입하지 않습니다.
       목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
       손절 시에만 전략별 쿨다운이 걸리며 그 쿨다운도 계좌별로 독립입니다.
     </div>
@@ -610,6 +614,7 @@ function renderDetail(d){
       <b style="color:#c7d3e6">최근 상태</b> · ${esc(st.last_event||'—')}
       ${st.watch?` <span class="neu">(근접 후보 ${esc(st.watch.name)} · 15초 ${money(st.watch.short_krw)} · ${(st.watch.surge_ratio||0).toFixed(1)}배)</span>`:''}
     </div>
+    ${Object.keys(st.symbol_cooldowns||{}).length?`<div class="small" style="margin-bottom:6px"><b style="color:#c7d3e6">🚫 동일 종목 재진입 대기</b> · ${Object.entries(st.symbol_cooldowns).map(([m,u])=>`${esc(String(m).replace('KRW-',''))} (~${esc(String(u||'').slice(11,16))})`).join(' · ')}</div>`:''}
     ${st.position ? posCard(st) : ''}
     <div style="font-size:11px;font-weight:800;color:#c3d0e4;margin:8px 0 5px">📜 ${esc(r.name||r.label)} 매매내역</div>
     ${stratTrades((d.recent_trades||[]).filter(t => t.strategy === r.key))}

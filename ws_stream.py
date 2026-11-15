@@ -18,6 +18,8 @@ import urllib.request
 from collections import deque
 from datetime import datetime, timedelta, timezone
 
+from market_filter import is_excluded_market, NOTE as MARKET_FILTER_NOTE  # noqa: E402
+
 KST = timezone(timedelta(hours=9))
 
 
@@ -46,7 +48,7 @@ def _get_json(url, timeout=10):
 
 
 def fetch_active_markets(min_24h_vol_krw=3_000_000_000):
-    """유의종목(market_warning != NONE) 제외 + 24시간 거래대금 기준 필터 후 거래대금 내림차순."""
+    """유의종목·스테이블코인 제외 + 24시간 거래대금 기준 필터 후 거래대금 내림차순."""
     markets = _get_json("https://api.upbit.com/v1/market/all?is_details=true", timeout=15)
     names, codes = {}, []
     for m in markets:
@@ -55,6 +57,8 @@ def fetch_active_markets(min_24h_vol_krw=3_000_000_000):
             continue
         if m.get("market_warning", "NONE") != "NONE":
             continue  # 유의종목 제외
+        if is_excluded_market(code):
+            continue  # 스테이블코인 제외 (구독 자체를 하지 않는다)
         codes.append(code)
         names[code] = m.get("korean_name", code)
 
@@ -66,7 +70,9 @@ def fetch_active_markets(min_24h_vol_krw=3_000_000_000):
                 "https://api.upbit.com/v1/ticker?markets=" + ",".join(batch), timeout=10))
         except Exception as e:
             print(f"[WS] ticker batch failed: {e}")
-    active = [t for t in tickers if t.get("acc_trade_price_24h", 0) >= min_24h_vol_krw]
+    active = [t for t in tickers
+              if t.get("acc_trade_price_24h", 0) >= min_24h_vol_krw
+              and not is_excluded_market(t.get("market"))]
     active.sort(key=lambda t: t["acc_trade_price_24h"], reverse=True)
     return [t["market"] for t in active], names
 
@@ -146,7 +152,7 @@ class UpbitTradeStream:
                 self._names = names
                 self._markets_loaded_at = time.time()
             print(f"[WS] Market list refreshed: {len(self._codes)} markets "
-                  f"(24h vol >= {self.min_vol/1e8:.0f}억, warning excluded)")
+                  f"(24h vol >= {self.min_vol/1e8:.0f}억, warning·stablecoin excluded)")
         except Exception as e:
             self.last_error = f"market refresh failed: {type(e).__name__}: {e}"
             print(f"[WS] {self.last_error}")
@@ -215,6 +221,8 @@ class UpbitTradeStream:
     def _on_trade(self, msg):
         try:
             market = msg["code"]
+            if is_excluded_market(market):   # 구독 목록에서 빠졌지만 안전하게 폐기
+                return
             price = float(msg["trade_price"])
             vol = float(msg["trade_volume"])
             ts = int(msg.get("trade_timestamp") or 0)
@@ -259,6 +267,8 @@ class UpbitTradeStream:
           · 10분 창: high_10m, coverage_10m_sec, drawdown_from_high_pct
           · 가격 이력: price_15s_ago, price_30s_ago, chg_15s_pct
         """
+        if is_excluded_market(market):
+            return None            # 스테이블코인은 어떤 전략에도 스냅샷을 주지 않는다
         now_ms = now_ms or int(time.time() * 1000)
         with self._lock:
             dq = self._ticks.get(market)
@@ -390,11 +400,15 @@ class UpbitTradeStream:
         with self._lock:
             market_count = len(self._codes)
             tracked = len(self._ticks)
+            excluded = sorted({c for c in list(self._codes) + list(self._extra)
+                               if c and is_excluded_market(c)})
         return {
             "ws_available": WEBSOCKETS_AVAILABLE,
             "ws_connected": self.connected,
             "ws_markets_count": market_count,
             "ws_markets_tracked": tracked,
+            "ws_excluded_markets": excluded,
+            "ws_filter_note": MARKET_FILTER_NOTE,
             "ws_ticks_per_sec": tps,
             "ws_ticks_total": self._ticks_total,
             "ws_reconnects": self.reconnects,

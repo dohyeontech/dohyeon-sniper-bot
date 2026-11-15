@@ -11,6 +11,10 @@
   [14] 리더보드 정렬 + 집계
   [15] 영속성
   [16] 통합 사이클(매수→청산) 및 승계 계좌 미변경 확인
+  [17] Gist 폴백 상태 보호
+  [18] 스테이블코인 전역 제외 (구독·캔들·신호·체결·기존 포지션 정리)
+  [19] rsi_oversold 동일 종목 30분 쿨다운 + 15초 반등·매수 70% 필터
+  [20] panic_bounce 트레일링(+1.3%→고점 -0.35%) + 손절 후 동일 종목 15분 쿨다운
 
 실행: python3 tests/test_v4_ten_strategies.py
 """
@@ -371,27 +375,33 @@ ok, why, _ = sig("major_momentum", snap("KRW-BIG3", 10.0, surge=4.0, bid=0.7, ch
 check("3분 +2.5% (뒷북) → 거부", not ok, why)
 
 # --------------------------------------------------------- [9] rsi_oversold
-print("[9] rsi_oversold — 1분봉 RSI 과매도 반등")
+print("[9] rsi_oversold — 1분봉 RSI 과매도 반등 (+ 반등 필터)")
 fake = {"KRW-R": {"market": "KRW-R", "age_sec": 10, "rsi": 24.0, "rsi_prev": 19.0,
                   "bb_upper": 101.0, "bw_rank": 0.5, "bandwidth_pct": 3.0, "vol_ratio": 1.0}}
 state = fresh(candles=fake)
-ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.65), state)
-check("RSI 19→24 반전 + 매수 65% → 진입", ok, why)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.75), state)
+check("RSI 19→24 반전 + 15초 반등 + 매수 75% → 진입", ok, why)
 bad = {"KRW-R": dict(fake["KRW-R"], rsi=26.0, rsi_prev=30.0)}
 state = fresh(candles=bad)
-ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.65), state)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.75), state)
 check("RSI 30 (과매도 아님) → 거부", not ok, why)
 bad2 = {"KRW-R": dict(fake["KRW-R"], rsi=18.0, rsi_prev=19.0)}
 state = fresh(candles=bad2)
-ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.65), state)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.75), state)
 check("RSI 하락 지속 → 거부", not ok, why)
 bad3 = {"KRW-R": dict(fake["KRW-R"], age_sec=400)}
 state = fresh(candles=bad3)
-ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.65), state)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.75), state)
 check("1분봉 캐시 400s 지연 → 거부", not ok, why)
 state = fresh(candles=fake)
-ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.55), state)
-check("매수 55% (60% 미달) → 거부", not ok, why)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.65), state)
+check("매수 65% (70% 미달) → 거부", not ok, why)
+state = fresh(candles=fake)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 9.9, bid=0.9, price_15s_ago=10.0), state)
+check("15초 반등 없음(가격 하락 지속) → 거부", not ok, why)
+state = fresh(candles=fake)
+ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.9, price_15s_ago=None), state)
+check("15초 가격 이력 없음 → 거부", not ok, why)
 state = fresh(candles=None)
 ok, why, _ = sig("rsi_oversold", snap("KRW-R", 10.0, bid=0.7), state)
 check("캔들 캐시 미연결 → 거부", not ok, why)
@@ -670,6 +680,203 @@ check("진입 없음", all(state["strategies"][k]["position"] is None for k in E
 os.environ.pop("GIST_TOKEN", None)
 os.environ.pop("GIST_ID", None)
 persistence._load_source = "local"
+
+print("[18] 스테이블코인 전역 제외 (구독·1분봉·신호·체결·기존 포지션)")
+import market_filter as MF  # noqa: E402
+import ws_stream as W  # noqa: E402
+from candles import CandleCache  # noqa: E402
+
+for code in ("KRW-USDT", "KRW-USDC", "KRW-DAI", "KRW-BUSD", "KRW-PYUSD", "KRW-EURC",
+             "KRW-USDE", "KRW-RLUSD"):
+    check(f"{code} 제외 판정", MF.is_excluded_market(code) is True)
+for code in ("KRW-BTC", "KRW-ETH", "KRW-XRP", "KRW-DOGE"):
+    check(f"{code} 정상 통과", MF.is_excluded_market(code) is False)
+check("base_symbol 분해", MF.base_symbol("KRW-USDT") == "USDT")
+check("빈 마켓은 제외 아님", MF.is_excluded_market(None) is False and MF.is_excluded_market("") is False)
+check("filter_markets 순서 유지",
+      MF.filter_markets(["KRW-BTC", "KRW-USDT", "KRW-XRP"]) == ["KRW-BTC", "KRW-XRP"])
+check("rules.market_filter 공개",
+      E.RULES_V4.get("market_filter", {}).get("stablecoin_excluded") is True
+      and "KRW-USDT" in E.RULES_V4["market_filter"]["excluded_markets"])
+
+# 웹소켓 구독 목록 산정 (네트워크 없이 _get_json 대체)
+_orig_get = W._get_json
+
+
+def _fake_get(url, timeout=10):
+    if "market/all" in url:
+        return [{"market": "KRW-AAA", "korean_name": "에이", "market_warning": "NONE"},
+                {"market": "KRW-USDT", "korean_name": "테더", "market_warning": "NONE"},
+                {"market": "KRW-USDC", "korean_name": "유에스디코인", "market_warning": "NONE"},
+                {"market": "KRW-WARN", "korean_name": "유의", "market_warning": "CAUTION"},
+                {"market": "KRW-BBB", "korean_name": "비", "market_warning": "NONE"},
+                {"market": "BTC-ETH", "korean_name": "이더", "market_warning": "NONE"}]
+    return [{"market": "KRW-AAA", "trade_price": 1.0, "acc_trade_price_24h": 50_000_000_000},
+            {"market": "KRW-USDT", "trade_price": 1379.0, "acc_trade_price_24h": 900_000_000_000},
+            {"market": "KRW-USDC", "trade_price": 1370.0, "acc_trade_price_24h": 40_000_000_000},
+            {"market": "KRW-BBB", "trade_price": 2.0, "acc_trade_price_24h": 5_000_000_000},
+            {"market": "KRW-SMALL", "trade_price": 3.0, "acc_trade_price_24h": 1_000_000_000}]
+
+W._get_json = _fake_get
+try:
+    codes, _names = W.fetch_active_markets(3_000_000_000)
+finally:
+    W._get_json = _orig_get
+check("구독 목록에서 스테이블코인·유의종목·저거래량 제외", codes == ["KRW-AAA", "KRW-BBB"], str(codes))
+
+ws = W.UpbitTradeStream()
+now_ms = int(time.time() * 1000)
+for code, price in (("KRW-USDT", 1379.0), ("KRW-AAA", 10.0)):
+    ws._on_trade({"code": code, "trade_price": price, "trade_volume": 100.0,
+                  "trade_timestamp": now_ms, "ask_bid": "BID"})
+check("USDT 틱은 저장하지 않음", ws.last_price("KRW-USDT") is None)
+check("스테이블코인 스냅샷 None", ws.market_snapshot("KRW-USDT", now_ms) is None)
+check("일반 종목 스냅샷 정상", ws.market_snapshot("KRW-AAA", now_ms) is not None)
+
+cc = CandleCache(lambda: ["KRW-USDT", "KRW-AAA", "KRW-USDC", "KRW-BBB"], top_n=3)
+check("1분봉 수집 대상에서 스테이블코인 제외", cc._target_markets() == ["KRW-AAA", "KRW-BBB"],
+      str(cc._target_markets()))
+_req_before = cc._requests
+cc._refresh("KRW-USDT")
+check("스테이블코인 1분봉 REST 호출 없음", cc._requests == _req_before)
+
+# USDT가 bb_squeeze 조건을 모두 만족해도 진입하지 않는다
+usdt_bb = {"market": "KRW-USDT", "age_sec": 5, "bb_upper": 1378.7879, "bw_rank": 0.25,
+           "bandwidth_pct": 0.05, "vol_ratio": 2.1, "rsi": 55.0, "rsi_prev": 54.0}
+state = fresh(candles={"KRW-USDT": usdt_bb})
+st = FakeStream()
+st.snaps = {"KRW-USDT": snap("KRW-USDT", 1379.0, short_krw=21_000_000.0, surge=2.1, bid=0.95, chg=0.15)}
+st.price = {"KRW-USDT": 1379.0}
+E.run_sniper_tick(st)
+check("스테이블코인은 어떤 전략도 진입하지 않음",
+      all(state["strategies"][k]["position"] is None for k in E.STRATEGY_KEYS),
+      str([(k, (state["strategies"][k]["position"] or {}).get("market")) for k in E.STRATEGY_KEYS
+           if state["strategies"][k]["position"]]))
+check("감시 패널에도 스테이블코인 없음",
+      all(r["market"] != "KRW-USDT" for r in state["live_scan"]["top"]))
+
+# 기존에 보유 중이던 스테이블코인은 다음 틱에 정상 정리된다
+state = fresh()
+bbs = force_position(state, "bb_squeeze", "KRW-USDT", 1379.0)
+_cash0 = bbs["cash_krw"]
+st = FakeStream()
+st.price = {"KRW-USDT": 1380.0}
+st.snaps = {}
+E.run_sniper_tick(st)
+bbs = state["strategies"]["bb_squeeze"]
+check("보유 스테이블코인 자동 정리", bbs["position"] is None, str(bbs["position"]))
+_last = (bbs["recent_trades"] or [{}])[-1]
+check("정리 청산 기록(STABLE_EXIT)",
+      _last.get("exit_kind") == "STABLE_EXIT" and _last.get("market") == "KRW-USDT", str(_last))
+check("정리 청산으로 현금 회수", bbs["cash_krw"] > 1_950_000, f"{bbs['cash_krw']:.0f}")
+check("정리 청산은 종목 쿨다운 없음", not bbs.get("symbol_cooldowns"), str(_cash0))
+
+# ------------------------------------------- [19] rsi_oversold 쿨다운·반등 필터
+print("[19] rsi_oversold — 동일 종목 30분 쿨다운 + 반등/매수 70% 필터")
+rp = E.STRATEGIES["rsi_oversold"]["params"]
+check("동일 종목 쿨다운 30분 (모든 청산)",
+      rp.get("symbol_cooldown_min") == 30 and rp.get("symbol_cooldown_scope") == "all", str(rp))
+check("매수 체결 비율 70%", rp.get("min_bid_ratio") == 0.70, str(rp.get("min_bid_ratio")))
+check("15초 반등 조건 상수", rp.get("min_rebound_pct") == 0.0, str(rp.get("min_rebound_pct")))
+
+cand = {"KRW-R": {"market": "KRW-R", "age_sec": 5, "rsi": 24.0, "rsi_prev": 19.0,
+                  "bb_upper": 101.0, "bw_rank": 0.5, "bandwidth_pct": 3.0, "vol_ratio": 1.0},
+        "KRW-R2": {"market": "KRW-R2", "age_sec": 5, "rsi": 22.0, "rsi_prev": 17.0,
+                   "bb_upper": 101.0, "bw_rank": 0.5, "bandwidth_pct": 3.0, "vol_ratio": 1.0}}
+_r_snaps = {"KRW-R": snap("KRW-R", 10.0, short_krw=1_000_000.0, surge=0.2, bid=0.8, chg=-0.5,
+                         price_15s_ago=9.95),
+            "KRW-R2": snap("KRW-R2", 10.0, short_krw=1_000_000.0, surge=0.2, bid=0.8, chg=-0.5,
+                          price_15s_ago=9.95)}
+state = fresh(candles=cand)
+st = FakeStream()
+st.snaps = dict(_r_snaps)
+st.price = {"KRW-R": 10.0, "KRW-R2": 10.0}
+E.run_sniper_tick(st)
+r = state["strategies"]["rsi_oversold"]
+check("rsi_oversold 진입", (r["position"] or {}).get("market") in ("KRW-R", "KRW-R2"),
+      str(r["position"]))
+_first = (r["position"] or {}).get("market")
+st.snaps = {}
+st.price[_first] = 10.0 * 0.984          # -1.6% → 손절
+E.run_sniper_tick(st)
+check("손절 청산", r["position"] is None)
+check("동일 종목 쿨다운 등록", _first in (r.get("symbol_cooldowns") or {}), str(r.get("symbol_cooldowns")))
+_cd = datetime.strptime(r["symbol_cooldowns"][_first], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+_left = (_cd - E.kst_now()).total_seconds()
+check("쿨다운 30분", 29 * 60 < _left <= 30 * 60 + 5, f"{_left:.0f}s")
+
+r["cooldown_until"] = None               # 계좌 쿨다운은 별개 — 종목 쿨다운만 검증
+st.snaps = dict(_r_snaps)
+st.price = {"KRW-R": 10.0, "KRW-R2": 10.0}
+E.run_sniper_tick(st)
+check("쿨다운 종목 재진입 차단 (다른 종목은 허용)",
+      (r["position"] or {}).get("market") not in (None, _first), str(r["position"]))
+
+state = fresh(candles=cand)
+r = state["strategies"]["rsi_oversold"]
+r["symbol_cooldowns"] = {"KRW-R": E.fmt(E.kst_now() - timedelta(minutes=1))}
+st = FakeStream()
+st.snaps = {"KRW-R": _r_snaps["KRW-R"]}
+st.price = {"KRW-R": 10.0}
+E.run_sniper_tick(st)
+check("만료된 종목 쿨다운은 재진입 허용",
+      (state["strategies"]["rsi_oversold"]["position"] or {}).get("market") == "KRW-R",
+      str(state["strategies"]["rsi_oversold"]["position"]))
+
+# ------------------------------------- [20] panic_bounce 트레일링·종목 쿨다운
+print("[20] panic_bounce — 트레일링(+1.3%→고점 -0.35%) + 손절 후 15분 종목 쿨다운")
+pp = E.STRATEGIES["panic_bounce"]["params"]
+check("트레일링 활성화 +1.3%", pp.get("trail_activation_pct") == 1.3, str(pp.get("trail_activation_pct")))
+check("고점 대비 -0.35% 청산", pp.get("trail_drop_pct") == 0.35, str(pp.get("trail_drop_pct")))
+check("손절 후 동일 종목 15분",
+      pp.get("symbol_cooldown_min") == 15 and pp.get("symbol_cooldown_scope") == "stop", str(pp))
+
+state = fresh()
+st = FakeStream()
+pb = force_position(state, "panic_bounce", "KRW-TR", 100.0)
+st.price = {"KRW-TR": 101.2}
+check("+1.2% (활성화 미달) → 트레일링 없음", E._check_exit(pb, st, E.kst_now()) is None)
+st.price = {"KRW-TR": 100.8}
+check("활성화 전 고점 -0.4% 반락도 청산 안 함", E._check_exit(pb, st, E.kst_now()) is None)
+st.price = {"KRW-TR": 101.35}
+check("+1.35% 고점 갱신 → 보유 유지", E._check_exit(pb, st, E.kst_now()) is None)
+st.price = {"KRW-TR": 101.35 * (1 - 0.0036)}
+_hit = E._check_exit(pb, st, E.kst_now())
+check("고점 대비 -0.36% → 트레일링 청산", _hit and _hit[2] == "TRAILING", str(_hit))
+check("트레일링 사유 문구", _hit and "트레일링" in _hit[1], _hit[1] if _hit else "")
+_pnl, _gain = E._close_position(pb, _hit[0], _hit[1], E.kst_now(), _hit[2])
+check("트레일링 익절 체결 (+0.9~1.0%)", 0.8 < _gain < 1.1, f"{_gain:+.2f}%")
+check("익절은 종목 쿨다운 없음", not pb.get("symbol_cooldowns"))
+
+state = fresh()
+pb = force_position(state, "panic_bounce", "KRW-PB", 100.0)
+E._close_position(pb, 98.5, "test SL", E.kst_now(), "STOP_LOSS")
+check("손절 → 동일 종목 쿨다운 15분", "KRW-PB" in (pb.get("symbol_cooldowns") or {}),
+      str(pb.get("symbol_cooldowns")))
+_cd = datetime.strptime(pb["symbol_cooldowns"]["KRW-PB"], "%Y-%m-%d %H:%M:%S").replace(tzinfo=KST)
+check("쿨다운 길이 15분", 14 * 60 < (_cd - E.kst_now()).total_seconds() <= 15 * 60 + 5,
+      f"{(_cd - E.kst_now()).total_seconds():.0f}s")
+state = fresh()
+pb = force_position(state, "panic_bounce", "KRW-PB", 100.0)
+E._close_position(pb, 102.5, "test TP", E.kst_now(), "TARGET")
+check("목표 익절은 종목 쿨다운 없음", not pb.get("symbol_cooldowns"), str(pb.get("symbol_cooldowns")))
+
+# 엔진 레벨: 손절한 종목에 같은 신호가 다시 떠도 15분간 재진입 금지
+state = fresh()
+st = FakeStream()
+st.snaps = {"KRW-P": snap("KRW-P", 10.0, short_krw=8_000_000.0, surge=1.0, bid=0.7,
+                          chg=-3.2, price_15s_ago=9.8)}
+st.price = {"KRW-P": 10.0}
+E.run_sniper_tick(st)
+pb = state["strategies"]["panic_bounce"]
+check("panic_bounce 최초 진입", (pb["position"] or {}).get("market") == "KRW-P", str(pb["position"]))
+st.price["KRW-P"] = 9.84
+E.run_sniper_tick(st)
+check("panic_bounce 손절", pb["position"] is None and pb["losses"] == 1)
+pb["cooldown_until"] = None
+st.price["KRW-P"] = 10.0
+E.run_sniper_tick(st)
+check("손절 종목 재진입 15분 차단", pb["position"] is None, str(pb["position"]))
 
 print(f"\nRESULT: {OK} passed, {FAIL} failed")
 if FAILED:
