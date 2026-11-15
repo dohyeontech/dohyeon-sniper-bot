@@ -354,6 +354,18 @@ check("1일 상한 도달 감지", E._trades_today(st["pullback_reentry"]) == 12
 st["pullback_reentry"]["recent_trades"] = [
     {"type": "SELL", "exit_time": "2026-11-14 10:00:00", "exit_kind": "TIME"}]
 check("어제 거래는 상한에 미포함", E._trades_today(st["pullback_reentry"]) == 0)
+today = E.fmt(E.kst_now())[:10]
+st["pullback_reentry"]["rules_effective_from"] = f"{today} 23:00:00"
+st["pullback_reentry"]["recent_trades"] = [
+    {"type": "SELL", "exit_time": f"{today} 22:00:00", "exit_kind": "TIME"}] * 12
+check("규칙 적용 이전 거래는 예산에 미포함", E._trades_today(st["pullback_reentry"]) == 0)
+st["pullback_reentry"]["recent_trades"] = [
+    {"type": "SELL", "exit_time": f"{today} 23:30:00", "exit_kind": "TIME"}] * 3
+check("규칙 적용 이후 거래만 카운트", E._trades_today(st["pullback_reentry"]) == 3)
+check("재설계 계좌는 규칙 적용 시점 기록",
+      mig["strategies"]["bb_squeeze"].get("rules_effective_from") is not None)
+check("규칙 유지 계좌는 1일 상한 없음 (예산 미적용)",
+      "max_trades_per_day" not in mig["strategies"]["10m"]["params"])
 
 # ------------------------------------------------------------- [6] 신호
 print("[6] 10전략 신호 (양성 + 경계 음성)")

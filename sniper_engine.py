@@ -463,6 +463,7 @@ def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
         "exit": meta["exit"],
         "params": dict(meta["params"]),
         "initialized_at": now_str,
+        "rules_effective_from": now_str,
         "initial_capital": float(seed),
         "cash_krw": float(seed),
         "position": None,
@@ -679,6 +680,8 @@ def migrate_from_v4(old):
         dst["carried_over"] = True
         dst["carried_from_version"] = old.get("version")
         dst["rules_changed"] = key in REBUILT_KEYS
+        if key in REBUILT_KEYS:
+            dst["rules_effective_from"] = fmt(kst_now())
         for trade in dst.get("recent_trades") or []:
             if isinstance(trade, dict):
                 trade.setdefault("strategy", key)
@@ -766,6 +769,12 @@ def ensure_league_state():
             state["strategies"][k].setdefault("symbol_cooldowns", {})
         state["strategy_order"] = list(STRATEGY_KEYS)
         state.setdefault("v4_archive", None)
+        # 규칙 적용 시점: 이미 마이그레이션된 상태에는 승계 시각을 한 번만 채운다
+        migrated_at = ((state.get("migrated_from") or {}).get("at")) or fmt(kst_now())
+        for k in STRATEGY_KEYS:
+            stk = state["strategies"][k]
+            if STRATEGIES[k].get("role") in ("rebuilt", "new") and not stk.get("rules_effective_from"):
+                stk["rules_effective_from"] = migrated_at
         _alias_legacy(state)
         _aggregate(state, None)
         if missing:
@@ -831,12 +840,25 @@ def _symbol_cooldown_until(st, market, now):
 
 
 def _trades_today(st, now=None, window=40):
-    """오늘(KST) 청산한 거래 수 — 1일 거래 상한(수수료 예산) 판정용."""
+    """오늘(KST) 청산한 거래 수 — 1일 거래 상한(수수료 예산) 판정용.
+
+    `rules_effective_from`이 있으면 그 시점 이후 청산만 센다. 승계·재설계 직후에
+    이전 규칙으로 한 거래가 새 규칙의 하루 예산을 미리 태우지 않게 하기 위해서다.
+    """
     day = fmt(now or kst_now())[:10]
+    since = st.get("rules_effective_from") or ""
     trades = (st.get("recent_trades") or [])[-window:]
-    return sum(1 for t in trades
-               if isinstance(t, dict) and t.get("type") == "SELL"
-               and str(t.get("exit_time") or "")[:10] == day)
+    out = 0
+    for t in trades:
+        if not isinstance(t, dict) or t.get("type") != "SELL":
+            continue
+        exit_time = str(t.get("exit_time") or "")
+        if exit_time[:10] != day:
+            continue
+        if since and exit_time < since:
+            continue
+        out += 1
+    return out
 
 
 def _prune_symbol_cooldowns(st, now):
