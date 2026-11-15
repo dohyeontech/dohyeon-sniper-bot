@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     print("[Bot Engine] Shutting down.")
 
 
-app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v4.0", lifespan=lifespan)
+app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v5.0", lifespan=lifespan)
 
 
 def _trim_trades(strategy_state, keep=0):
@@ -162,6 +162,27 @@ def _merged_status():
         "laggard": data.get("laggard"),
         "strategy_count": len(STRATEGY_KEYS),
     }
+
+    # v4.0 퇴출 계좌는 라이브 수익률과 분리해 보여준다 (숨기지 않고 별도 표기)
+    archive = state.get("v4_archive") or {}
+    retired = archive.get("retired_totals") or {}
+    alltime = {
+        "live_equity": data.get("current_equity"),
+        "live_initial": data.get("initial_capital"),
+        "live_ret_pct": data.get("current_ret_pct"),
+        "retired_equity": retired.get("final_equity"),
+        "retired_initial": retired.get("initial_capital"),
+        "retired_ret_pct": retired.get("ret_pct"),
+        "retired_count": retired.get("count"),
+    }
+    if retired.get("initial_capital") and data.get("current_equity") is not None:
+        all_equity = (data.get("current_equity") or 0) + (retired.get("final_equity") or 0)
+        all_initial = (data.get("initial_capital") or 0) + (retired.get("initial_capital") or 0)
+        alltime.update({"all_equity": round(all_equity), "all_initial": round(all_initial),
+                        "all_ret_pct": round((all_equity - all_initial) / all_initial * 100, 2)
+                        if all_initial else None})
+    data["league_all_time"] = alltime
+    data["retired_summary"] = retired
     return data
 
 
@@ -216,6 +237,12 @@ def api_v1_archive():
 @app.get("/api/v2-archive")
 def api_v2_archive():
     return _archive_response("v2_archive.json", "v2_archive")
+
+
+@app.get("/api/v4-archive")
+def api_v4_archive():
+    """v4.0 진단 아카이브 — 퇴출·재설계 전략의 최종 성적표와 사유 (v5.0 승계 시 생성)."""
+    return _archive_response("v4_archive.json", "v4_archive")
 
 
 @app.get("/api/ws")

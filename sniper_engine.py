@@ -1,38 +1,58 @@
 """
-스나이퍼 봇 v4.0 — 「10대 단타 전략 실시간 비교 리그」.
+스나이퍼 봇 v5.0 — 「단타 전략 실시간 비교 리그 (개편)」.
 
 업비트 실시간 WebSocket 체결 스트림 **1개** 위에서, 잔고·포지션·전적·쿨다운·매매내역이
 완전히 분리된 **10개의 독립 가상 계좌(각 시드 2,000,000원)** 를 동시에 운용한다.
 같은 시장 스냅샷을 모든 전략이 공유하므로 "같은 순간에 어떤 규칙이 돈을 버는가"를
 조건이 동일한 상태에서 비교할 수 있다.
 
-  기존 승계 (v3.1 3계좌, 잔고·전적·포지션 그대로 이관)
-    1. 3m               — 300만↑ 급등 추격
-    2. 10m              — 1,000만↑ 급등 추격
-    3. 30m              — 3,000만↑ 급등 추격
-  신규 7전략 (각 200만 원 신규 시드)
-    4. panic_bounce     — 투매 과매도 반등
-    5. pullback_reentry — 눌림목 재진입
-    6. vwap_breakout    — 실시간 VWAP 돌파
-    7. streak_ignition  — 연속 매수 긁기
-    8. major_momentum   — 대형주 TOP10 스캘핑
-    9. rsi_oversold     — 1분봉 RSI 과매도 반등
-   10. bb_squeeze       — 1분봉 볼린저 스퀴즈 돌파
+v5.0 개편 근거 (v4.0 실거래 390건 진단)
+  · v4.0 손실의 정체는 방향이 아니라 **왕복 비용**이었다. 최근 200청산의 가격손익은
+    +119,993원이었지만 수수료 378,008원이 이를 뒤집어 순 -258,015원이 됐다.
+  · 손실은 **대형주(BTC·ETH·XRP·SOL·DOGE 등)** 에 집중됐다. 70건이 청산의 90%를 시간초과로
+    맞으며 건당 -0.141%(-313,638원), 알트 130건은 건당 +0.135%(+55,623원).
+    → BTC의 20분 변동(0.2~0.4%)에 목표 +1.5~2.5%를 건 **유니버스·밴드 불일치**가 원인.
+  · 호가 스프레드를 0으로 가정한 체결 모델도 낙관적이었다. 93.8원 종목은 1틱이 0.107%,
+    128원 종목은 0.78%라 왕복 실비용이 수수료 0.10% + 호가 1틱 = 0.21~0.88%까지 벌어진다.
 
-공통 리스크 규칙: BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 **모멘텀·돌파 8전략 신규 진입 차단**
-(보유 포지션은 유지). 역추세 2전략(`panic_bounce`, `rsi_oversold`)만 `btc_filter: False`로 예외 적용되어
-BTC 하락 추세에서도 진입한다. 손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
+그래서 v5.0은 세 가지를 공통 규칙으로 넣는다.
+  1. **체결 모델**: 매수 = 관측가 + 0.5틱, 매도 = 관측가 - 0.5틱 → 호가 스프레드 1틱을
+     매수·매도에 나눠 문다. 왕복 실비용 = 수수료 0.10% + 호가 1틱.
+     (목표 익절은 목표가 체결, 그 외는 관측 틱 체결 — 초과분 미반영의 보수적 규칙 유지)
+  2. **변동성 게이트**: 10분 레인지가 전략별 하한 미만인 종목은 진입 금지 (`min_range_10m_pct`).
+     BTC·ETH 같은 대형주는 이 게이트에서 자동 제외되어, 목표에 닿을 수 없는 거래를 하지 않는다.
+  3. **비용 게이트**: 목표 익절폭이 왕복 실비용의 `cost_mult`배(기본 5배) 미만이면 진입 금지.
+     + **1일 거래 상한**(`max_trades_per_day`)으로 수수료 예산을 강제한다.
+
+  규칙 그대로 승계 (v4.0 잔고·전적·포지션 무손실)
+    1. 3m               — 300만↑ 급등 추격 (대조군)
+    2. 10m              — 1,000만↑ 급등 추격 (v4 리그 2위)
+    3. panic_bounce     — 투매 과매도 반등 (v4 리그 1위)
+  조건 재설계 (잔고·전적 승계, 규칙만 교체)
+    4. 30m              — 대형주 10분 레인지 역추세 (구 3,000만↑ 급등 추격 → 비용 인식 밴드)
+    5. pullback_reentry — 눌림목 재진입 (변동성·비용 게이트 + 트레일링 + 20분 상한)
+    6. vwap_breakout    — 실시간 VWAP 돌파 (거래량 3배·변동성 게이트 + 트레일링)
+    7. bb_squeeze       — 볼린저 스퀴즈 돌파 (중심선 위 상승 국면 한정 + 트레일링)
+  신규 3전략 (각 200만 원 신규 시드)
+    8. box_breakout     — 10분 박스권 돌파 (수축 후 거래량 동반 확장)
+    9. alt_rs           — 알트-BTC 디커플링 상대강도
+   10. tape_sweep       — 대형 매수 체결 스파이크 (체결 불균형)
+
+  퇴출·아카이브(v4_archive.json/state): `rsi_oversold`(-22.15%), `major_momentum`(-14.55%),
+  `streak_ignition`(-6.07%) — 대형주에 알트 밴드를 씌운 구조적 결함 또는 거래 빈도 자체가
+  수수료를 만들던 구조. 전적·청산사유 분포·진단 문구를 아카이브에 그대로 보존한다.
+
+공통 리스크 규칙: BTC 15분봉 20이평 대비 -0.2% 초과 하회 시 모멘텀·돌파 9전략 신규 진입 차단
+(보유 포지션은 유지). 역추세 1전략(`panic_bounce`)만 `btc_filter: False`로 예외 적용.
+손절 시에만 전략별 쿨다운이 걸리고, 그 쿨다운도 계좌별로 독립이다.
 
 시장 전역 제외: 스테이블코인(`KRW-USDT`·`KRW-USDC`·`KRW-DAI`·`KRW-BUSD` 등)은 가격이 페그에
 고정돼 목표 익절 도달이 불가능하고 변이 0이라 밴드 수축·유동성 상위 조건만 통과해 수수료만
 누수된다. `market_filter.py` 정의 하나로 구독·1분봉 수집·신호 판정·체결에서 전면 제외하며,
 제외 대상 마켓을 보유 중이면 다음 틱에 정상 정리(청산)한다.
 
-종목별 재진입 쿨다운: `rsi_oversold`는 청산 후 같은 종목 30분 재진입 금지(떨어지는 칼날 연속
-손절 차단), `panic_bounce`는 손절 후 같은 종목 15분 재진입 금지를 둔다.
-
-청산은 1.5초 판단 루프에서 틱 가격으로 감시한다. 목표 익절은 목표가 체결(초과분 미반영,
-보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
+종목별 재진입 쿨다운: 재설계·신규 전략은 청산 사유와 무관하게 같은 종목 재진입을 15~20분
+금지한다(한 종목 몰빵·연속 손절 차단). `panic_bounce`는 기존대로 손절 후 15분 금지.
 """
 
 import json
@@ -51,23 +71,122 @@ from market_filter import (  # noqa: E402
     is_excluded_market, STABLE_BASES, EXCLUDED_MARKETS, NOTE as MARKET_FILTER_NOTE,
 )
 
-VERSION = "4.0"
+VERSION = "5.0"
 FEE_RATE = 0.0005           # 업비트 수수료 0.05%
 TICK_INTERVAL_SEC = 1.5     # 엔진 판단 주기
 DEFAULT_SEED = 2_000_000    # 전략별 모의 시드
 KST = timezone(timedelta(hours=9))
+SPREAD_TICKS = 0.5          # 편도 0.5틱 = 왕복 호가 1틱 (매수 +0.5틱, 매도 -0.5틱)
 
 LEGACY_KEYS = ("3m", "10m", "30m")
-NEW_KEYS = ("panic_bounce", "pullback_reentry", "vwap_breakout", "streak_ignition",
-            "major_momentum", "rsi_oversold", "bb_squeeze")
-STRATEGY_KEYS = LEGACY_KEYS + NEW_KEYS
+KEPT_KEYS = ("3m", "10m", "panic_bounce")                  # 규칙 불변 · 잔고 승계 (대조군)
+REBUILT_KEYS = ("30m", "pullback_reentry", "vwap_breakout", "bb_squeeze")
+NEW_KEYS = ("box_breakout", "alt_rs", "tape_sweep")
+RETIRED_KEYS = ("rsi_oversold", "major_momentum", "streak_ignition")
+STRATEGY_KEYS = ("3m", "10m", "30m", "panic_bounce", "pullback_reentry", "vwap_breakout",
+                 "bb_squeeze") + NEW_KEYS
+
+# v4.0에서 퇴출한 전략의 진단 (아카이브에 함께 보존)
+RETIRED_DIAGNOSIS = {
+    "rsi_oversold": (
+        "47전 17승 30패(승률 32.7%) -22.15%. 최근 20청산 중 15건이 시간초과였고, 실제 거래 종목은 "
+        "1분봉 캐시 대상인 거래대금 상위 15종목(BTC·ETH·SOL·XRP·DOGE 등 대형주)이었다. "
+        "1분봉 RSI(14) 25 이하라는 신호에 +1.8%/-1.5% 밴드를 걸었지만 대형주의 25분 변동은 "
+        "0.3~0.6%라 목표에 닿을 수 없었고, 60초 주기(최대 180초 허용) 캐시라 신호 자체도 늦었다. "
+        "→ 장세가 아니라 유니버스·밴드·데이터 지연의 설계 결함."),
+    "major_momentum": (
+        "37전 15승 22패(승률 40.5%) -14.55%. 24h 거래대금 TOP10은 정의상 대형주뿐인데 "
+        "+1.5%/-1.2% 밴드와 트레일링(+1.0% 활성→고점 -0.3%)을 걸어, 이익은 0.62~0.91%에서 잘리고 "
+        "손실은 -1.2~-1.5%로 남았다(승 +0.81% / 패 -0.90%). 눌림 8건이 -1.41% 평균 손절. "
+        "→ 승률 40.5%에서 기대값 음수가 확정된 구조."),
+    "streak_ignition": (
+        "72전 27승 45패(승률 37.5%) -6.07%. 리그에서 가장 많이 거래한 계좌로, 10초 BID 85% 조건이 "
+        "BTC·XRP 같은 대형주에서 10분간 ±0.1% 횡보를 사들이며 왕복 수수료만 누적했다"
+        "(대형주 12/20건, 평균 +0.08%). 목표 +1.8%/-1.2%에 10분 상한이라 대형주에서는 도달 불가. "
+        "→ 신호가 아니라 거래 빈도 자체가 비용이 된 사례."),
+}
+
+# 컨셉이 유효해 재설계로 살린 전략의 진단 (대시보드·보고서 근거)
+REBUILT_DIAGNOSIS = {
+    "30m": ("20전 7승 13패 -4.69%. 20청산 중 17건이 시간초과, 18건이 대형주였다. 3,000만↑/15초 "
+            "문턱은 구조상 BTC·ETH·XRP·SOL만 통과시키는데 목표 +2.5%는 20분 안에 도달 불가. "
+            "→ 대형주에 맞는 0.9%/0.6% 밴드의 레인지 역추세로 교체."),
+    "pullback_reentry": ("38전 15승 23패(39.5%) -10.55%. 목표 도달 5건 vs 손절 8건(평균 -1.41%), "
+                         "시간초과 7건. 눌림 구간(-1.0~-2.2%)이 변동성과 무관한 고정값이라 "
+                         "죽은 종목에서도 진입했고, 트레일링이 없어 +1.5%까지 갔다가 시간초과로 "
+                         "되돌려 나왔다. → 변동성·비용 게이트 + 트레일링 + 20분 상한."),
+    "vwap_breakout": ("30전 10승 20패(33.3%) -7.5%. 20청산 중 13건이 시간초과, 목표 도달 2건. "
+                      "VWAP 돌파 후 2.0%까지 가는 종목이 드물었고 상승이 꺾여도 잡아줄 트레일링이 "
+                      "없었다. → 거래량 문턱 3배·변동성 게이트 + 트레일링 + 20분 상한."),
+    "bb_squeeze": ("24전 10승 14패(41.7%) -1.5%. 목표 도달 4건이 각 +2.4%(+4.2만 원)로 벌어줬지만 "
+                   "시간초과 12건이 ±0%대로 수수료만 냈다. 30분 상한이 길고, 하락 국면의 수축 "
+                   "돌파까지 잡았다. → 중심선 위 상승 국면 한정 + 트레일링 + 20분 상한."),
+}
+
+
+def tick_size(price):
+    """업비트 원화마켓 호가단위(틱) — 가격대별 최소 호가."""
+    try:
+        p = float(price)
+    except (TypeError, ValueError):
+        return 0.0
+    if p <= 0:
+        return 0.0
+    if p >= 2_000_000:
+        return 1000.0
+    if p >= 1_000_000:
+        return 500.0
+    if p >= 500_000:
+        return 100.0
+    if p >= 100_000:
+        return 50.0
+    if p >= 10_000:
+        return 10.0
+    if p >= 1_000:
+        return 5.0
+    if p >= 100:
+        return 1.0
+    if p >= 10:
+        return 0.1
+    if p >= 1:
+        return 0.01
+    if p >= 0.1:
+        return 0.001
+    if p >= 0.01:
+        return 0.0001
+    if p >= 0.001:
+        return 0.00001
+    return 0.000001
+
+
+def cost_pct(price, spread_ticks=SPREAD_TICKS):
+    """왕복 실비용(%) = 수수료 0.05%×2 + 호가 스프레드(편도 tick×spread_ticks)."""
+    t = tick_size(price)
+    if not t or not price:
+        return 2 * FEE_RATE * 100.0
+    return 2 * FEE_RATE * 100.0 + 2 * (t * spread_ticks / float(price) * 100.0)
+
+
+def fill_buy(price, spread_ticks=SPREAD_TICKS):
+    """매수 체결가 — 관측 체결가 + 호가 1틱(ask 쪽)."""
+    p = float(price)
+    return p + tick_size(p) * spread_ticks
+
+
+def fill_sell(price, spread_ticks=SPREAD_TICKS):
+    """매도 체결가 — 관측 체결가 - 호가 1틱(bid 쪽)."""
+    p = float(price)
+    out = p - tick_size(p) * spread_ticks
+    return max(out, p * 0.5)
+
 
 # ---------------------------------------------------------------- 전략 정의
 STRATEGIES = {
-    # ---- v3.1에서 승계되는 3계좌 (규칙 동일, 15초 거래대금 문턱만 다름) ----
+    # ---- 규칙 불변 승계 (v4.0 리그 상위 3계좌 = 대조군) ----
     "3m": {
         "key": "3m", "label": "300만↑", "name": "300만↑ 급등 추격",
         "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True, "btc_filter": True,
+        "role": "kept",
         "entry": "15초 거래대금 300만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
         "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
         "params": {"min_short_krw": 3_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
@@ -78,6 +197,7 @@ STRATEGIES = {
     "10m": {
         "key": "10m", "label": "1,000만↑", "name": "1,000만↑ 급등 추격",
         "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
+        "role": "kept",
         "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
         "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
         "params": {"min_short_krw": 10_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
@@ -85,20 +205,73 @@ STRATEGIES = {
                    "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
                    "max_hold_min": 20, "cooldown_min": 5},
     },
+    # ---- 조건 재설계 4전략 (잔고·전적 승계) ----
     "30m": {
-        "key": "30m", "label": "3,000만↑", "name": "3,000만↑ 급등 추격",
-        "style": "보수형 · 대형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
-        "entry": "15초 거래대금 3,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
-        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 20분 · 쿨다운 5분",
-        "params": {"min_short_krw": 30_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
-                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
-                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
-                   "max_hold_min": 20, "cooldown_min": 5},
+        "key": "30m", "label": "3,000만↑", "name": "대형주 10분 레인지 역추세",
+        "style": "역추세 · 대형주 레인지", "kind": "range_rev", "legacy": True, "btc_filter": True,
+        "role": "rebuilt",
+        "entry": ("24h 거래대금 TOP10 대형주 · 10분 고점 대비 -0.35~-1.2% 눌림에서 "
+                  "15초 BID 62%↑ + 15초 반등 0.05%↑"),
+        "exit": ("목표 +0.9% · 트레일링 +0.6%→고점 -0.25% · 손절 -0.6% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 10분"),
+        "params": {"top_n": 10, "dd_min_pct": -1.2, "dd_max_pct": -0.35, "min_bid_ratio": 0.62,
+                   "min_rebound_pct": 0.05, "min_coverage_10m_sec": 540,
+                   "target_pct": 0.9, "trail_activation_pct": 0.6, "trail_drop_pct": 0.25,
+                   "stop_pct": -0.6, "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 10, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 14},
     },
-    # ---- 신규 7전략 ----
+    "pullback_reentry": {
+        "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
+        "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False, "btc_filter": True,
+        "role": "rebuilt",
+        "entry": ("3분 +0.5%↑ 상승 후 10분 고점 대비 -0.8~-2.0% 눌림 · 10분 레인지 1.0%↑ · "
+                  "15초 BID 62%↑ + 상승 전환"),
+        "exit": ("목표 +2.4% · 트레일링 +1.5%→고점 -0.45% · 손절 -1.3% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
+        "params": {"dd_min_pct": -2.0, "dd_max_pct": -0.8, "min_bid_ratio": 0.62,
+                   "min_chg_3m_pct": 0.5, "min_coverage_10m_sec": 300,
+                   "min_range_10m_pct": 1.0, "target_pct": 2.4,
+                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.45, "stop_pct": -1.3,
+                   "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 12},
+    },
+    "vwap_breakout": {
+        "key": "vwap_breakout", "label": "VWAP 돌파", "name": "실시간 VWAP 돌파",
+        "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False, "btc_filter": True,
+        "role": "rebuilt",
+        "entry": ("3분 VWAP 하단에서 15초 거래대금 3.0배↑ + BID 62%↑ 동반, VWAP +0.35%↑ 돌파 · "
+                  "10분 레인지 1.0%↑"),
+        "exit": ("목표 +2.0% · 트레일링 +1.1%→고점 -0.35% · 손절 -1.2% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
+        "params": {"min_vol_ratio": 3.0, "min_bid_ratio": 0.62, "breakout_pct": 0.35,
+                   "min_coverage_sec": 120, "min_range_10m_pct": 1.0,
+                   "target_pct": 2.0, "trail_activation_pct": 1.1, "trail_drop_pct": 0.35,
+                   "stop_pct": -1.2, "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 12},
+    },
+    "bb_squeeze": {
+        "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
+        "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False, "btc_filter": True,
+        "role": "rebuilt",
+        "entry": ("1분봉 볼린저(20,2) 수축(40봉 밴드폭 하위 20%) + 종가 > 중심선 + "
+                  "상단 밴드 거래량 2.0배↑ 돌파 · 10분 레인지 0.9%↑"),
+        "exit": ("목표 +2.2% · 트레일링 +1.2%→고점 -0.35% · 손절 -1.3% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
+        "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.20, "min_vol_ratio": 2.0,
+                   "max_candle_age_sec": 120, "require_above_mid": True,
+                   "min_range_10m_pct": 0.9, "target_pct": 2.2,
+                   "trail_activation_pct": 1.2, "trail_drop_pct": 0.35, "stop_pct": -1.3,
+                   "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 12},
+    },
     "panic_bounce": {
         "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
         "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
+        "role": "kept",
         "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
         "exit": "목표 +2.0% · 트레일링 +1.3%→고점 -0.35% · 손절 -1.5% · 최대 15분 · 쿨다운 5분 · 동일종목 15분",
         "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 2.0,
@@ -106,66 +279,55 @@ STRATEGIES = {
                    "max_hold_min": 15, "cooldown_min": 5,
                    "symbol_cooldown_min": 15, "symbol_cooldown_scope": "stop"},
     },
-    "pullback_reentry": {
-        "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
-        "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False, "btc_filter": True,
-        "entry": "3~10분 고점 대비 -1.0~-2.2% 눌림 구간에서 15초 BID 65%↑ + 가격 상승 전환",
-        "exit": "목표 +2.2% · 손절 -1.6% · 최대 25분 · 쿨다운 5분",
-        "params": {"dd_min_pct": -2.2, "dd_max_pct": -1.0, "min_bid_ratio": 0.65,
-                   "min_coverage_10m_sec": 180, "target_pct": 2.2,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.6,
-                   "max_hold_min": 25, "cooldown_min": 5},
+    # ---- 신규 3전략 ----
+    "box_breakout": {
+        "key": "box_breakout", "label": "박스 돌파", "name": "10분 박스권 돌파",
+        "style": "추세추종 · 수축 후 확장", "kind": "box", "legacy": False, "btc_filter": True,
+        "role": "new",
+        "entry": ("10분 박스 폭 1.1% 이하로 수축한 뒤 직전 15초 제외 박스 고점 +0.15% 돌파 · "
+                  "15초 거래대금 3.0배↑ · BID 65%↑"),
+        "exit": ("목표 +2.2% · 트레일링 +1.4%→고점 -0.4% · 손절 -1.2% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
+        "params": {"box_max_range_pct": 1.1, "breakout_pct": 0.15, "min_surge_ratio": 3.0,
+                   "min_bid_ratio": 0.65, "min_short_krw": 5_000_000,
+                   "min_coverage_10m_sec": 540, "min_range_10m_pct": 0.3,
+                   "max_chg_15s_pct": 1.2, "target_pct": 2.2,
+                   "trail_activation_pct": 1.4, "trail_drop_pct": 0.4, "stop_pct": -1.2,
+                   "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 10},
     },
-    "vwap_breakout": {
-        "key": "vwap_breakout", "label": "VWAP 돌파", "name": "실시간 VWAP 돌파",
-        "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False, "btc_filter": True,
-        "entry": "직전 3분 VWAP 하단에서 15초 거래대금 2.5배↑ + BID 65%↑ 동반, VWAP +0.3%↑ 상향 돌파",
-        "exit": "목표 +2.0% · 손절 -1.5% · 최대 25분 · 쿨다운 5분",
-        "params": {"min_vol_ratio": 2.5, "min_bid_ratio": 0.65, "breakout_pct": 0.3,
-                   "min_coverage_sec": 120, "target_pct": 2.0,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
-                   "max_hold_min": 25, "cooldown_min": 5},
+    "alt_rs": {
+        "key": "alt_rs", "label": "알트 상대강도", "name": "알트-BTC 디커플링 강세",
+        "style": "로테이션 · 상대강도", "kind": "alt_rs", "legacy": False, "btc_filter": True,
+        "role": "new",
+        "entry": ("3분 수익률이 BTC 3분 수익률보다 +0.8%p 이상 앞서고(디커플링) 15초 거래대금 "
+                  "2.5배↑ · BID 62%↑ · 10분 레인지 0.8%↑"),
+        "exit": ("목표 +2.2% · 트레일링 +1.3%→고점 -0.4% · 손절 -1.3% · 최대 20분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
+        "params": {"min_rs_pct": 0.8, "min_chg_3m_pct": 0.5, "min_surge_ratio": 2.5,
+                   "min_bid_ratio": 0.62, "min_short_krw": 3_000_000,
+                   "min_range_10m_pct": 0.8, "exclude_btc": True, "target_pct": 2.2,
+                   "trail_activation_pct": 1.3, "trail_drop_pct": 0.4, "stop_pct": -1.3,
+                   "max_hold_min": 20, "cooldown_min": 5,
+                   "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 10},
     },
-    "streak_ignition": {
-        "key": "streak_ignition", "label": "매수 긁기", "name": "연속 매수 긁기",
-        "style": "모멘텀 · 순간 초동", "kind": "streak", "legacy": False, "btc_filter": True,
-        "entry": "최근 10초 BID 비중 85%↑ + 체결 15건↑ + 15초 거래대금 500만↑",
-        "exit": "목표 +1.8% · 손절 -1.2% · 최대 10분 · 쿨다운 3분",
-        "params": {"min_ticks_10s": 15, "min_bid_10s": 0.85, "min_short_krw": 5_000_000,
-                   "min_coverage_sec": 20, "target_pct": 1.8,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.2,
-                   "max_hold_min": 10, "cooldown_min": 3},
-    },
-    "major_momentum": {
-        "key": "major_momentum", "label": "대형주 스캘핑", "name": "대형주 TOP10 스캘핑",
-        "style": "모멘텀 · 유동성 상위", "kind": "major", "legacy": False, "btc_filter": True,
-        "entry": "24h 거래대금 TOP10만 · 15초 거래대금 3.0배↑ + BID 65%↑ + 3분변동 +0.2~+2.0%",
-        "exit": "목표 +1.5% · 트레일링 +1.0%→고점 -0.3% · 손절 -1.2% · 최대 30분 · 쿨다운 5분",
-        "params": {"top_n": 10, "min_surge_ratio": 3.0, "min_bid_ratio": 0.65,
-                   "min_chg_pct": 0.2, "max_chg_pct": 2.0, "target_pct": 1.5,
-                   "trail_activation_pct": 1.0, "trail_drop_pct": 0.3, "stop_pct": -1.2,
-                   "max_hold_min": 30, "cooldown_min": 5},
-    },
-    "rsi_oversold": {
-        "key": "rsi_oversold", "label": "RSI 과매도", "name": "1분봉 RSI 과매도 반등",
-        "style": "역추세 · 지표 반전", "kind": "rsi", "legacy": False, "btc_filter": False,
-        "entry": "1분봉 RSI(14) 25 이하 과매도에서 RSI 상향 반전 + 15초 BID 70%↑ + 15초 가격 반등(>0%)",
-        "exit": "목표 +1.8% · 손절 -1.5% · 최대 25분 · 쿨다운 5분 · 동일종목 30분",
-        "params": {"rsi_period": 14, "rsi_threshold": 25.0, "min_bid_ratio": 0.70,
-                   "min_rebound_pct": 0.0, "max_candle_age_sec": 180, "target_pct": 1.8,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.5,
-                   "max_hold_min": 25, "cooldown_min": 5,
-                   "symbol_cooldown_min": 30, "symbol_cooldown_scope": "all"},
-    },
-    "bb_squeeze": {
-        "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
-        "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False, "btc_filter": True,
-        "entry": "1분봉 볼린저밴드(20,2) 수축(최근 40봉 밴드폭 하위 25%) 후 상단 밴드 거래량 2.0배↑ 돌파",
-        "exit": "목표 +2.4% · 손절 -1.6% · 최대 30분 · 쿨다운 5분",
-        "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.25, "min_vol_ratio": 2.0,
-                   "max_candle_age_sec": 180, "target_pct": 2.4,
-                   "trail_activation_pct": None, "trail_drop_pct": None, "stop_pct": -1.6,
-                   "max_hold_min": 30, "cooldown_min": 5},
+    "tape_sweep": {
+        "key": "tape_sweep", "label": "체결 스파이크", "name": "대형 매수 체결 스파이크",
+        "style": "체결불균형 · 초단타", "kind": "tape", "legacy": False, "btc_filter": True,
+        "role": "new",
+        "entry": ("10초 내 단일 매수 체결 300만↑ & 3분 평균 체결 금액의 4배↑(대형 매수 스윕) + "
+                  "15초 가격 +0.12%↑ · BID 60%↑"),
+        "exit": ("목표 +1.8% · 트레일링 +1.1%→고점 -0.3% · 손절 -1.0% · 최대 8분 · "
+                 "쿨다운 3분 · 동일종목 15분"),
+        "params": {"min_print_krw": 3_000_000, "min_print_mult": 4.0, "min_ticks_10s": 5,
+                   "min_chg_15s_pct": 0.12, "min_bid_10s": 0.60,
+                   "min_range_10m_pct": 0.6, "target_pct": 1.8,
+                   "trail_activation_pct": 1.1, "trail_drop_pct": 0.3, "stop_pct": -1.0,
+                   "max_hold_min": 8, "cooldown_min": 3,
+                   "symbol_cooldown_min": 15, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_trades_per_day": 14},
     },
 }
 
@@ -177,31 +339,50 @@ BTC_FILTER_EXEMPT = tuple(k for k in STRATEGY_KEYS if not STRATEGIES[k].get("btc
 def _rules_block():
     """대시보드·Gist에 저장하는 규칙 요약 (정적)."""
     return {
-        "engine": "Upbit WebSocket trade stream (tick-level) · 10전략 병렬 리그",
+        "engine": "Upbit WebSocket trade stream (tick-level) · 10전략 병렬 리그 v5.0",
         "tick_interval_sec": TICK_INTERVAL_SEC,
         "seed_per_strategy": DEFAULT_SEED,
         "short_window_sec": 15,
         "base_window_sec": 180,
+        "fee_rate": FEE_RATE,
+        "fill_model": {
+            "fee_round_trip_pct": round(2 * FEE_RATE * 100, 3),
+            "spread": f"왕복 호가 1틱 (매수 관측가+{SPREAD_TICKS}틱, 매도 관측가-{SPREAD_TICKS}틱)",
+            "note": ("v4.0까지는 호가 스프레드를 0으로 가정해 낙관적이었다. 93.8원 종목은 1틱이 "
+                     "0.107%, 128원 종목은 0.78%다. v5.0부터 왕복 호가 1틱을 매수·매도에 "
+                     "0.5틱씩 나눠 반영한다."),
+            "target": "목표 익절 체결가는 목표가로 계산 (틱 초과분 미반영, 보수적)",
+            "other_exits": "손절/트레일링/시간초과는 관측 틱 가격 -0.5틱으로 체결",
+        },
+        "cost_gates": {
+            "volatility_gate": ("10분 레인지(%)가 전략별 하한 미만인 종목은 진입 금지 "
+                                "(대형주는 목표 도달이 불가능하므로 자동 제외)"),
+            "cost_mult": ("목표 익절폭이 왕복 실비용(수수료 0.10% + 호가 2틱)의 cost_mult배(기본 5배) "
+                          "미만이면 진입 금지 — 수수료·호가 벽 방지"),
+            "daily_cap": "전략별 1일 거래(청산) 상한으로 수수료 예산을 강제",
+        },
         "btc_filter": {"enabled": True, "sma_window": "15분봉 20이평", "threshold_pct": -0.2,
-                       "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 8전략 신규 진입 차단(보유 유지). "
-                                "역추세 2전략(투매 과매도 반등·RSI 과매도 반등)은 예외로 진입 허용"),
+                       "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 9전략 신규 진입 "
+                                "차단(보유 유지). 역추세 1전략(투매 과매도 반등)만 예외"),
                        "exempt_strategies": list(BTC_FILTER_EXEMPT)},
         "market_filter": {"stablecoin_excluded": True,
                           "excluded_markets": sorted(EXCLUDED_MARKETS),
                           "excluded_bases": sorted(STABLE_BASES),
                           "note": MARKET_FILTER_NOTE},
         "candle_cache": {"top_n": 15, "refresh_sec": 60, "sleep_sec": 0.25,
-                         "note": "RSI·볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 순환 수집"},
+                         "note": ("볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 "
+                                  "순환 수집 (v5.0은 RSI 전략 퇴출로 캔들 의존 전략 1개)")},
         "gist_sync_interval_sec": 60,
-        "fee_rate": FEE_RATE,
         "strategies": {
             k: {"key": k, "label": STRATEGIES[k]["label"], "name": STRATEGIES[k]["name"],
                 "style": STRATEGIES[k]["style"], "entry": STRATEGIES[k]["entry"],
                 "exit": STRATEGIES[k]["exit"], "params": dict(STRATEGIES[k]["params"]),
                 "btc_filter": bool(STRATEGIES[k]["btc_filter"]),
+                "role": STRATEGIES[k].get("role"),
                 "carried_over": STRATEGIES[k]["legacy"]}
             for k in STRATEGY_KEYS
         },
+        "retired": {k: {"key": k, "diagnosis": RETIRED_DIAGNOSIS.get(k, "")} for k in RETIRED_KEYS},
     }
 
 
@@ -277,6 +458,7 @@ def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
         "kind": meta["kind"],
         "btc_filter": bool(meta["btc_filter"]),
         "carried_over": meta["legacy"],
+        "role": meta.get("role", "new"),
         "entry": meta["entry"],
         "exit": meta["exit"],
         "params": dict(meta["params"]),
@@ -308,7 +490,7 @@ def new_league_state(seed=DEFAULT_SEED):
     state = {
         "version": VERSION,
         "status": "WAITING_FOR_SIGNAL",
-        "engine": "ws_tick_v4_league",
+        "engine": "ws_tick_v5_league",
         "mode": "ten_strategy_league",
         "initialized_at": now_str,
         "initial_capital": total,
@@ -322,7 +504,7 @@ def new_league_state(seed=DEFAULT_SEED):
         "losses": 0,
         "recent_trades": [],
         "last_checked_time": now_str,
-        "last_event": "v4.0 10전략 리그 초기화 — 웹소켓 틱 스트림 대기",
+        "last_event": "v5.0 10전략 리그 초기화 — 웹소켓 틱 스트림 대기",
         "rules": RULES_V4,
         "strategies": strategies,
         "strategy_order": list(STRATEGY_KEYS),
@@ -332,9 +514,10 @@ def new_league_state(seed=DEFAULT_SEED):
         "peak_equity": total,
         "max_drawdown_pct": 0.0,
         "live_scan": {"scanned": 0, "qualified": 0, "top": []},
+        "v4_archive": None,
         "exit_rules_note": {
             "target": "목표 익절 체결가는 목표가로 계산 (틱 초과분 미반영, 보수적)",
-            "stop": "손절/트레일링/시간초과는 관측 틱 가격으로 체결 (슬리피지 반영)",
+            "stop": "손절/트레일링/시간초과는 관측 틱 가격 -0.5틱으로 체결 (호가 반영)",
         },
     }
     _alias_legacy(state)
@@ -342,7 +525,7 @@ def new_league_state(seed=DEFAULT_SEED):
 
 
 def _alias_legacy(state):
-    """v3.x 소비자 호환: state['tiers']는 승계 3계좌를 같은 객체로 가리킨다."""
+    """v3.x 소비자 호환: state['tiers']는 3계좌를 같은 객체로 가리킨다."""
     strat = state.get("strategies") or {}
     state["tiers"] = {k: strat[k] for k in LEGACY_KEYS if k in strat}
     return state
@@ -355,17 +538,136 @@ CARRY_FIELDS = ("initialized_at", "initial_capital", "cash_krw", "position", "co
                 "peak_equity", "max_drawdown_pct")
 
 
-def migrate_from_v3(old):
-    """v3.0/v3.1 상태를 v4.0 리그로 승계한다.
+def _exit_kind_counts(trades):
+    out = {}
+    for t in trades or []:
+        if t.get("type") != "SELL":
+            continue
+        k = t.get("exit_kind") or "UNKNOWN"
+        out[k] = out.get(k, 0) + 1
+    return out
 
-    기존 3계좌(3m/10m/30m)의 잔고·전적·보유 포지션·쿨다운·매매내역을 **손대지 않고**
-    같은 키의 전략 슬롯으로 그대로 옮기고, 신규 7전략만 200만 원 신규 시드로 채운다.
+
+def _v4_strategy_row(src, key, decision, diagnosis):
+    """v4.0 전략 하나의 최종 성적표 (아카이브 행)."""
+    src = src or {}
+    trades = int(src.get("total_trades") or 0)
+    wins = int(src.get("wins") or 0)
+    losses = int(src.get("losses") or 0)
+    cap = float(src.get("initial_capital") or DEFAULT_SEED)
+    equity = float(src.get("current_equity") or src.get("cash_krw") or cap)
+    cash = float(src.get("cash_krw") or 0.0)
+    pos = src.get("position") or None
+    if pos:      # 미청산 포지션은 마지막 관측가로 평가
+        px = pos.get("last_price") or pos.get("entry_price") or 0
+        equity = cash + float(pos.get("coin_qty") or 0.0) * float(px or 0)
+    sells = [t for t in (src.get("recent_trades") or []) if t.get("type") == "SELL"]
+    time_exits = sum(1 for t in sells if t.get("exit_kind") == "TIME")
+    return {
+        "key": key,
+        "label": src.get("label") or STRATEGIES.get(key, {}).get("label", key),
+        "name": src.get("name") or STRATEGIES.get(key, {}).get("name", key),
+        "style": src.get("style"),
+        "decision": decision,
+        "diagnosis": diagnosis,
+        "initial_capital": round(cap),
+        "final_equity": round(equity),
+        "ret_pct": round((equity - cap) / cap * 100, 2) if cap else 0.0,
+        "trades": trades,
+        "wins": wins,
+        "losses": losses,
+        "win_rate_pct": round(wins / trades * 100, 1) if trades else 0.0,
+        "realized_pnl": round(float(src.get("total_realized_pnl") or 0.0)),
+        "max_drawdown_pct": src.get("max_drawdown_pct"),
+        "exit_kinds": _exit_kind_counts(sells),
+        "recent_window": {
+            "n": len(sells),
+            "time_exit_pct": round(time_exits / len(sells) * 100, 0) if sells else None,
+            "avg_gain_pct": round(sum(t.get("gain_pct", 0) for t in sells) / len(sells), 3) if sells else None,
+            "sells": [{k: t.get(k) for k in ("exit_time", "market", "name", "gain_pct",
+                                             "pnl_krw", "hold_min", "exit_kind")}
+                      for t in sells[-20:]],
+        },
+        "open_position_at_archive": ({
+            "market": pos.get("market"), "name": pos.get("name"),
+            "entry_time": pos.get("entry_time"), "entry_price": pos.get("entry_price"),
+            "price_at_archive": pos.get("last_price") or pos.get("entry_price"),
+            "unrealized_pct": pos.get("unrealized_pct"),
+        } if pos else None),
+    }
+
+
+def _build_v4_archive(old, now=None):
+    """퇴출 3전략 + 재설계 4전략 + 승계 3전략의 v4.0 최종 성적표를 만든다."""
+    old = old or {}
+    strats = old.get("strategies") or {}
+    rows = []
+    for key in RETIRED_KEYS:
+        if isinstance(strats.get(key), dict):
+            rows.append(_v4_strategy_row(strats[key], key, "retired",
+                                         RETIRED_DIAGNOSIS.get(key, "")))
+    for key in REBUILT_KEYS:
+        if isinstance(strats.get(key), dict):
+            rows.append(_v4_strategy_row(strats[key], key, "rebuilt",
+                                         REBUILT_DIAGNOSIS.get(key, "")))
+    for key in ("3m", "10m", "panic_bounce"):
+        if isinstance(strats.get(key), dict):
+            rows.append(_v4_strategy_row(
+                strats[key], key, "kept",
+                "규칙을 바꾸지 않고 잔고·전적만 승계한 대조군. v5.0 개편 효과를 나란히 비교하기 위해 남긴다."))
+    retired = [r for r in rows if r["decision"] == "retired"]
+    return {
+        "version": old.get("version"),
+        "period": {"from": old.get("initialized_at"), "to": fmt(now or kst_now())},
+        "archived_at": fmt(now or kst_now()),
+        "league": {
+            "initial_capital": old.get("initial_capital"),
+            "final_equity": old.get("current_equity"),
+            "ret_pct": old.get("current_ret_pct"),
+            "trades": old.get("total_trades"),
+            "wins": old.get("wins"),
+            "losses": old.get("losses"),
+            "realized_pnl": old.get("total_realized_pnl"),
+        },
+        "retired_totals": {
+            "count": len(retired),
+            "initial_capital": sum(r["initial_capital"] for r in retired),
+            "final_equity": sum(r["final_equity"] for r in retired),
+            "trades": sum(r["trades"] for r in retired),
+            "realized_pnl": sum(r["realized_pnl"] for r in retired),
+            "ret_pct": (round((sum(r["final_equity"] for r in retired)
+                               - sum(r["initial_capital"] for r in retired))
+                              / sum(r["initial_capital"] for r in retired) * 100, 2)
+                        if retired else 0.0),
+        },
+        "note": ("v4.0 라이브 리그의 최종 성적표. 퇴출 3전략은 v5.0 리그에서 빠지고 그 손익은 "
+                 "라이브 수익률에 합산되지 않는다(별도 보존). 재설계 4전략과 승계 3전략은 "
+                 "잔고·전적을 그대로 이어받아 v5.0에서 계속 기록된다."),
+        "fill_model": {
+            "v4": "수수료 왕복 0.10% · 호가 스프레드 0(가정)",
+            "v5": "수수료 왕복 0.10% · 호가 1틱(왕복) 반영",
+            "note": "v4.0 수치는 스프레드를 빼고 계산돼 실제보다 낙관적이다.",
+        },
+        "strategies": rows,
+    }
+
+
+def migrate_from_v4(old):
+    """v4.0 상태를 v5.0 리그로 옮긴다.
+
+    · 3m / 10m / panic_bounce : 규칙·잔고·전적·포지션을 **그대로** 승계 (대조군)
+    · 30m / pullback_reentry / vwap_breakout / bb_squeeze : 잔고·전적은 승계하고 규칙만 재설계.
+      재설계 시점에 보유 중이던 포지션은 다음 틱에 시장가로 정리한다(규칙이 바뀐 포지션을
+      새 규칙으로 억지 청산하지 않도록).
+    · rsi_oversold / major_momentum / streak_ignition : 퇴출. v4_archive에 성적·진단을 보존.
+    · box_breakout / alt_rs / tape_sweep : 200만 원 신규 시드.
     """
     state = new_league_state()
-    old_tiers = (old or {}).get("tiers") or {}
-    carried = []
-    for key in LEGACY_KEYS:
-        src = old_tiers.get(key)
+    old = old or {}
+    old_strats = old.get("strategies") or {}
+    carried, archived = [], []
+    for key in STRATEGY_KEYS:
+        src = old_strats.get(key)
         if not isinstance(src, dict):
             continue
         dst = state["strategies"][key]
@@ -375,8 +677,8 @@ def migrate_from_v3(old):
         if src.get("initial_capital"):
             dst["initial_capital"] = float(src["initial_capital"])
         dst["carried_over"] = True
-        dst["carried_from_version"] = (old or {}).get("version")
-        # 승계된 매매내역에도 전략 라벨을 붙여 대시보드 필터가 끊기지 않게 한다
+        dst["carried_from_version"] = old.get("version")
+        dst["rules_changed"] = key in REBUILT_KEYS
         for trade in dst.get("recent_trades") or []:
             if isinstance(trade, dict):
                 trade.setdefault("strategy", key)
@@ -385,35 +687,54 @@ def migrate_from_v3(old):
                 if key in LEGACY_KEYS:
                     trade.setdefault("tier", key)
         if dst.get("position"):
-            dst["status"] = "IN_POSITION"
-            dst["last_event"] = f"v{(old or {}).get('version', '3.x')} 보유 포지션 그대로 승계"
+            if key in REBUILT_KEYS:
+                dst["position"]["force_exit_reason"] = (
+                    f"v{VERSION} 규칙 재설계 — 이전 규칙 포지션 정리(시장가)")
+                dst["last_event"] = "재설계 승계 — 보유 포지션을 다음 틱에 정리합니다"
+            else:
+                dst["status"] = "IN_POSITION"
+                dst["last_event"] = f"v{old.get('version', '4.x')} 보유 포지션 그대로 승계"
         elif dst.get("total_trades"):
-            dst["last_event"] = (f"v{(old or {}).get('version', '3.x')} 전적 {dst['total_trades']}전 "
-                                 f"{dst.get('wins', 0)}승 {dst.get('losses', 0)}패 승계")
+            dst["last_event"] = (f"v{old.get('version', '4.x')} 전적 {dst['total_trades']}전 "
+                                 f"{dst.get('wins', 0)}승 {dst.get('losses', 0)}패 승계"
+                                 + (" · 규칙 재설계" if key in REBUILT_KEYS else ""))
         else:
-            dst["last_event"] = f"{dst['name']} — v{(old or {}).get('version', '3.x')} 기록 승계 (0전)"
+            dst["last_event"] = f"{dst['name']} — v{old.get('version', '4.x')} 기록 승계 (0전)"
         carried.append(key)
 
+    for key in RETIRED_KEYS:
+        if isinstance(old_strats.get(key), dict):
+            archived.append(key)
+
+    state["v4_archive"] = _build_v4_archive(old)
+    retired_rows = [r for r in state["v4_archive"]["strategies"] if r["decision"] == "retired"]
     state["migrated_from"] = {
-        "version": (old or {}).get("version"),
+        "version": old.get("version"),
         "at": fmt(kst_now()),
         "carried_keys": carried,
-        "trades": sum(int(state["strategies"][k].get("total_trades") or 0) for k in carried),
-        "equity": sum(float(state["strategies"][k].get("cash_krw") or 0) for k in carried),
+        "rules_changed_keys": [k for k in carried if k in REBUILT_KEYS],
+        "retired_keys": archived,
+        "new_keys": [k for k in NEW_KEYS],
+        "carried_trades": sum(int(state["strategies"][k].get("total_trades") or 0) for k in carried),
+        "carried_equity": round(sum(float(state["strategies"][k].get("current_equity")
+                                         or state["strategies"][k].get("cash_krw") or 0)
+                                    for k in carried)),
+        "retired_equity": round(sum(r["final_equity"] for r in retired_rows)),
+        "retired_ret_pct": state["v4_archive"]["retired_totals"]["ret_pct"],
         "had_position": any(bool(state["strategies"][k].get("position")) for k in carried),
-        "note": "기존 3계좌는 잔고·전적·포지션 그대로 승계, 신규 7전략은 200만 원 신규 시드",
+        "note": ("3계좌(3m·10m·panic_bounce)는 규칙·잔고 그대로, 4전략은 잔고·전적 승계 + 규칙 재설계, "
+                 "3전략 퇴출(아카이브), 신규 3전략은 200만 원 신규 시드"),
     }
-    print(f"[Engine] Migrated v{(old or {}).get('version')} -> v{VERSION}: "
-          f"carried {carried} (trades={state['migrated_from']['trades']}, "
-          f"positions={state['migrated_from']['had_position']})")
+    print(f"[Engine] Migrated v{old.get('version')} -> v{VERSION}: carried {carried} "
+          f"(retired {archived}, new {list(NEW_KEYS)})")
     return state
 
 
-def ensure_v4_state():
-    """Gist/로컬 상태를 v4.0 10전략 리그로 맞춘다.
+def ensure_league_state():
+    """Gist/로컬 상태를 v5.0 10전략 리그로 맞춘다.
 
-    - 이미 v4.0이면 누락 전략만 채우고 규칙 정의를 최신화
-    - v3.x (3계좌)면 3계좌를 그대로 승계하고 신규 7전략 추가
+    - 이미 v5.0이면 누락 전략만 채우고 규칙 정의를 최신화
+    - v4.0이면 승계·재설계·퇴출 마이그레이션 (아카이브 생성)
     - 그 외/손상 상태면 10전략 × 200만 원 신규 시드
     - Gist가 설정돼 있는데 원격 로드에 실패한 경우에는 **절대 마이그레이션/원격 저장을 하지 않는다**
       (낡은 로컬 state.json으로 라이브 전적을 덮어쓰는 사고 방지). 엔진이 5초 간격으로 재시도한다.
@@ -439,18 +760,25 @@ def ensure_v4_state():
             state["strategies"][k]["entry"] = STRATEGIES[k]["entry"]
             state["strategies"][k]["exit"] = STRATEGIES[k]["exit"]
             state["strategies"][k]["btc_filter"] = bool(STRATEGIES[k]["btc_filter"])
-            # 규칙 파라미터는 코드 정의를 따른다 (새 트레일링·종목 쿨다운이 기존 상태에도 반영)
+            state["strategies"][k]["role"] = STRATEGIES[k].get("role", "new")
+            # 규칙 파라미터는 코드 정의를 따른다
             state["strategies"][k]["params"] = dict(STRATEGIES[k]["params"])
             state["strategies"][k].setdefault("symbol_cooldowns", {})
         state["strategy_order"] = list(STRATEGY_KEYS)
+        state.setdefault("v4_archive", None)
         _alias_legacy(state)
         _aggregate(state, None)
         if missing:
             save_state(state, remote=True, force_remote=True)
         return state
 
-    if isinstance(state.get("tiers"), dict) and str(version or "").startswith("3"):
-        new = migrate_from_v3(state)
+    if isinstance(state.get("strategies"), dict) and str(version or "").startswith("4"):
+        new = migrate_from_v4(state)
+    elif isinstance(state.get("tiers"), dict) and str(version or "").startswith("3"):
+        # v3.x를 건너뛴 경우: v4와 동일하게 3계좌만 잔고 승계하고 나머지는 신규
+        old4 = dict(state)
+        old4["strategies"] = dict(state.get("tiers") or {})
+        new = migrate_from_v4(old4)
     else:
         print(f"[Engine] State reset from v{version} -> v{VERSION} "
               f"({len(STRATEGY_KEYS)} strategies x {DEFAULT_SEED:,} KRW)")
@@ -458,6 +786,10 @@ def ensure_v4_state():
     _aggregate(new, None)
     save_state(new, remote=True, force_remote=True)
     return new
+
+
+# 하위 호환 (main.py·기존 테스트가 쓰던 이름)
+ensure_v4_state = ensure_league_state
 
 
 # ---------------------------------------------------------------- 지표 계산
@@ -498,6 +830,15 @@ def _symbol_cooldown_until(st, market, now):
     return until
 
 
+def _trades_today(st, now=None, window=40):
+    """오늘(KST) 청산한 거래 수 — 1일 거래 상한(수수료 예산) 판정용."""
+    day = fmt(now or kst_now())[:10]
+    trades = (st.get("recent_trades") or [])[-window:]
+    return sum(1 for t in trades
+               if isinstance(t, dict) and t.get("type") == "SELL"
+               and str(t.get("exit_time") or "")[:10] == day)
+
+
 def _prune_symbol_cooldowns(st, now):
     """만료된 종목 쿨다운 정리 (상태가 무한정 커지는 것 방지)."""
     boosts = st.get("symbol_cooldowns")
@@ -532,9 +873,11 @@ def _close_position(st, price, reason, now, exit_kind):
     p = st.get("params") or {}
     entry_price = float(pos["entry_price"])
     qty = float(pos["coin_qty"])
-    net = qty * price * (1 - FEE_RATE)
+    # v5.0 체결 모델: 매도는 관측가 -1틱(bid 쪽). 목표 청산도 목표가에서 1틱을 뺀다.
+    sell_price = fill_sell(price)
+    net = qty * sell_price * (1 - FEE_RATE)
     pnl = net - float(pos["cost_krw"])
-    gain_pct = (price - entry_price) / entry_price * 100.0
+    gain_pct = (sell_price - entry_price) / entry_price * 100.0
 
     st["cash_krw"] = net
     st["total_realized_pnl"] = float(st.get("total_realized_pnl", 0.0)) + pnl
@@ -558,12 +901,14 @@ def _close_position(st, price, reason, now, exit_kind):
         "entry_time": pos.get("entry_time"),
         "exit_time": fmt(now),
         "entry_price": entry_price,
-        "exit_price": round(price, 8),
+        "exit_price": round(sell_price, 8),
         "gain_pct": round(gain_pct, 2),
         "pnl_krw": round(pnl),
         "hold_min": round((_now_ms() - int(pos.get("entry_ts_ms") or _now_ms())) / 60000.0, 1),
         "reason": reason,
         "exit_kind": exit_kind,
+        "fill_model": f"fee {2 * FEE_RATE * 100:.2f}% + spread {SPREAD_TICKS}t/leg",
+        "cost_pct": round(cost_pct(entry_price), 3),
     })
     st["position"] = None
     st["status"] = "WAITING_FOR_SIGNAL"
@@ -594,7 +939,7 @@ def _check_exit(st, stream, now):
     stop_price = entry * (1 + p["stop_pct"] / 100.0)
     target_price = entry * (1 + p["target_pct"] / 100.0)
 
-    # 1) 기계적 손절 (관측 가격 체결)
+    # 1) 기계적 손절 (관측 가격 -1틱 체결)
     if price <= stop_price:
         return price, (f"🛑 기계적 손절 발동 ({gain:.2f}%) · "
                        f"{p.get('cooldown_min', 5)}분 쿨다운"), "STOP_LOSS"
@@ -657,31 +1002,71 @@ def _sig_panic_bounce(snap, st, ctx):
                   f"매수 {snap['bid_ratio']*100:.0f}%"), reb
 
 
+def _market_gates(snap, st):
+    """v5.0 공통 진입 게이트 — 변동성 하한 · 유동성 · 왕복비용 대비 목표폭.
+
+    지역시장(대형주)에 알트용 밴드를 씌우던 v4.0의 실패를 막는 장치다.
+    · 10분 레인지가 하한 미만 → 그 종목은 보유 시간 안에 목표까지 못 간다 (대형주 자동 제외)
+    · 목표폭 < 왕복 실비용 × cost_mult → 맞아도 수수료·호가에 먹힌다
+    """
+    p = st.get("params") or {}
+    mr = p.get("min_range_10m_pct")
+    if mr:
+        rng = snap.get("range_10m_pct")
+        if rng is None:
+            return False, "10분 레인지 표본 없음"
+        if rng < float(mr):
+            return False, (f"10분 레인지 {rng:.2f}% < {mr:.2f}% "
+                           f"(변동성 부족 — 비용 대비 손익비 불성립)")
+    mt = p.get("min_ticks_10m")
+    if mt:
+        ticks = int(snap.get("ticks_10m") or 0)
+        if ticks < int(mt):
+            return False, f"10분 체결 {ticks}건 < {mt}건 (호가 얇음)"
+    cm = p.get("cost_mult")
+    if cm:
+        c = cost_pct(snap.get("last_price"))
+        tgt = float(p.get("target_pct") or 0)
+        if c > 0 and tgt < float(cm) * c:
+            return False, (f"목표 {tgt:.2f}% < 왕복비용 {c:.2f}%×{cm} "
+                           f"(수수료·호가 벽 — 손익비 불성립)")
+    return True, ""
+
+
 def _sig_pullback(snap, st, ctx):
-    """3~10분 고점 대비 -1.0~-2.2% 눌림 + 매수 우위 + 상승 전환."""
+    """3분 상승 후 10분 고점 대비 눌림 + 매수 우위 + 상승 전환 (v5.0 변동성·비용 게이트)."""
     p = st["params"]
     if snap["coverage_10m_sec"] < p["min_coverage_10m_sec"]:
         return False, f"10분 고점 관측 {snap['coverage_10m_sec']:.0f}s < {p['min_coverage_10m_sec']}s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
+    if snap["chg_3m_pct"] < float(p.get("min_chg_3m_pct") or 0.0):
+        return False, (f"3분 상승 {snap['chg_3m_pct']:+.2f}% < +{p.get('min_chg_3m_pct')}% "
+                       f"(눌릴 상승이 없음)"), 0.0
     dd = snap.get("drawdown_from_high_pct")
     if dd is None:
         return False, "고점 표본 없음", 0.0
     if dd > p["dd_max_pct"]:
-        return False, f"고점 대비 {dd:+.2f}% (눌림 부족, 기준 -1.0%↓)", -dd
+        return False, f"고점 대비 {dd:+.2f}% (눌림 부족, 기준 {p['dd_max_pct']}%↓)", -dd
     if dd < p["dd_min_pct"]:
-        return False, f"고점 대비 {dd:+.2f}% (눌림 과다, 기준 -2.2%↑)", -dd
+        return False, f"고점 대비 {dd:+.2f}% (눌림 과다, 기준 {p['dd_min_pct']}%↑)", -dd
     if snap["bid_ratio"] < p["min_bid_ratio"]:
         return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", 0.0
     if snap["price_15s_ago"] is None or snap["last_price"] <= snap["price_15s_ago"]:
         return False, "상승 전환 미확인", 0.0
-    return True, (f"고점 대비 {dd:+.2f}% 눌림 · 매수 {snap['bid_ratio']*100:.0f}% · "
-                  f"15초 반등 확인"), snap["short_krw"] / 1e4
+    return True, (f"3분 {snap['chg_3m_pct']:+.2f}% 상승 후 고점 대비 {dd:+.2f}% 눌림 · "
+                  f"매수 {snap['bid_ratio']*100:.0f}% · 15초 반등 확인"), snap["short_krw"] / 1e4
 
 
 def _sig_vwap(snap, st, ctx):
-    """직전 3분 VWAP 하단 → 거래대금 2.5배 + 매수 우위로 VWAP +0.3% 돌파."""
+    """직전 3분 VWAP 하단 → 거래대금 3배 + 매수 우위로 VWAP +0.35% 돌파 (v5.0)."""
     p = st["params"]
     if snap["coverage_sec"] < p["min_coverage_sec"]:
         return False, f"관측 {snap['coverage_sec']:.0f}s < {p['min_coverage_sec']}s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
     vwap = snap.get("vwap_3m")
     if not vwap:
         return False, "VWAP 표본 없음", 0.0
@@ -699,87 +1084,25 @@ def _sig_vwap(snap, st, ctx):
                   f"매수 {snap['bid_ratio']*100:.0f}%"), bo
 
 
-def _sig_streak(snap, st, ctx):
-    """10초 연속 매수 체결 + 체결 건수 + 15초 거래대금."""
-    p = st["params"]
-    if snap["coverage_sec"] < p["min_coverage_sec"]:
-        return False, f"관측 {snap['coverage_sec']:.0f}s < {p['min_coverage_sec']}s", 0.0
-    score = float(snap["ticks_10s"])
-    if snap["ticks_10s"] < p["min_ticks_10s"]:
-        return False, f"10초 체결 {snap['ticks_10s']}건 < {p['min_ticks_10s']}건", score
-    if snap["bid_ratio_10s"] < p["min_bid_10s"]:
-        return False, f"10초 매수비중 {snap['bid_ratio_10s']*100:.0f}% < {p['min_bid_10s']*100:.0f}%", score
-    if snap["short_krw"] < p["min_short_krw"]:
-        return False, (f"15초 거래대금 {snap['short_krw']/1e4:,.0f}만 < "
-                       f"{p['min_short_krw']/1e4:,.0f}만"), score
-    return True, (f"10초 {snap['ticks_10s']}건 · 매수 {snap['bid_ratio_10s']*100:.0f}% · "
-                  f"15초 {snap['short_krw']/1e4:,.0f}만"), score + snap["short_krw"] / 1e5
-
-
-def _sig_major(snap, st, ctx):
-    """24h 거래대금 TOP10 + 15초 폭발 + 매수 우위 + 3분 상승."""
-    p = st["params"]
-    if snap["market"] not in ctx["top_markets"]:
-        return False, "24h 거래대금 TOP10 아님", 0.0
-    if snap["coverage_sec"] < 60 or snap["base_ticks"] < 3:
-        return False, "기준 표본 부족", 0.0
-    if snap["surge_ratio"] < p["min_surge_ratio"]:
-        return False, f"폭발배수 {snap['surge_ratio']:.1f}x < {p['min_surge_ratio']:.1f}x", snap["surge_ratio"]
-    if snap["bid_ratio"] < p["min_bid_ratio"]:
-        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", snap["surge_ratio"]
-    if snap["chg_3m_pct"] < p["min_chg_pct"]:
-        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% < +{p['min_chg_pct']}%", snap["surge_ratio"]
-    if snap["chg_3m_pct"] > p["max_chg_pct"]:
-        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% > +{p['max_chg_pct']}% (뒷북)", snap["surge_ratio"]
-    return True, (f"TOP10 · {snap['surge_ratio']:.1f}배 · 매수 {snap['bid_ratio']*100:.0f}% · "
-                  f"3분 {snap['chg_3m_pct']:+.2f}%"), snap["surge_ratio"] * 1e6 + snap["short_krw"] / 1e4
-
-
-def _sig_rsi(snap, st, ctx):
-    """1분봉 RSI(14) 25 이하 과매도 → 상향 반전 + 매수 우위 + 15초 가격 반등.
-
-    떨어지는 칼날 방어: RSI 반전·매수 우위만으로는 급략 지속 구간에서 계속 잡히므로
-    최근 15초 가격이 직전 15초 대비 실제로 올라선 경우(>min_rebound_pct)만 진입한다.
-    """
-    p = st["params"]
-    c = snap.get("candles")
-    if not c:
-        return False, "1분봉 캐시 대기 (거래대금 상위 15종목만 수집)", 0.0
-    if c.get("age_sec", 999) > p["max_candle_age_sec"]:
-        return False, f"1분봉 캐시 {c['age_sec']:.0f}s 지연", 0.0
-    rsi_now, rsi_prev = c.get("rsi"), c.get("rsi_prev")
-    if rsi_now is None or rsi_prev is None:
-        return False, "RSI 표본 부족", 0.0
-    score = p["rsi_threshold"] - rsi_prev
-    if rsi_prev > p["rsi_threshold"]:
-        return False, f"RSI {rsi_prev:.1f} > {p['rsi_threshold']:.0f} (과매도 아님)", score
-    if rsi_now <= rsi_prev:
-        return False, f"RSI 반전 미확인 ({rsi_prev:.1f}→{rsi_now:.1f})", score
-    if snap["bid_ratio"] < p["min_bid_ratio"]:
-        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", score
-    min_reb = float(p.get("min_rebound_pct") or 0.0)
-    ago = snap.get("price_15s_ago")
-    if not ago:
-        return False, "15초 가격 이력 없음 (반등 미확인)", score
-    reb = (snap["last_price"] - ago) / ago * 100.0
-    if reb <= min_reb:
-        return False, f"15초 반등 {reb:+.2f}% ≤ {min_reb:+.2f}% (떨어지는 칼날)", score
-    return True, (f"RSI {rsi_prev:.1f}→{rsi_now:.1f} 반전 · 15초 반등 {reb:+.2f}% · "
-                  f"매수 {snap['bid_ratio']*100:.0f}%"), score
-
-
 def _sig_bb(snap, st, ctx):
-    """1분봉 볼린저(20,2) 수축 후 상단 밴드 거래량 2.0배 돌파."""
+    """볼린저(20,2) 수축 + 종가 > 중심선 + 상단 밴드 거래량 돌파 (v5.0 상승 국면 한정)."""
     p = st["params"]
     c = snap.get("candles")
     if not c:
         return False, "1분봉 캐시 대기 (거래대금 상위 15종목만 수집)", 0.0
     if c.get("age_sec", 999) > p["max_candle_age_sec"]:
         return False, f"1분봉 캐시 {c['age_sec']:.0f}s 지연", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
     up, rank, bw = c.get("bb_upper"), c.get("bw_rank"), c.get("bandwidth_pct")
+    mid = c.get("bb_mid")
     if up is None or rank is None:
         return False, "볼린저 표본 부족", 0.0
     score = snap["surge_ratio"]
+    if p.get("require_above_mid") and mid:
+        if (c.get("last_close") or 0) < float(mid):
+            return False, (f"중심선 {float(mid):,.4f} 아래 (하락 국면 수축 — 돌파 신뢰도 낮음)"), score
     if rank > p["squeeze_rank"]:
         return False, (f"밴드 수축 아님 (폭 {bw:.2f}% · 최근 40봉 백분위 {rank*100:.0f}% > "
                        f"{p['squeeze_rank']*100:.0f}%)"), score
@@ -788,8 +1111,144 @@ def _sig_bb(snap, st, ctx):
     vol_ratio = c.get("vol_ratio")
     if snap["surge_ratio"] < p["min_vol_ratio"] and (vol_ratio or 0) < p["min_vol_ratio"]:
         return False, f"돌파 거래량 미달 ({snap['surge_ratio']:.1f}배)", score
-    return True, (f"수축(백분위 {rank*100:.0f}%) 후 {up:,.4f} 돌파 · "
+    return True, (f"수축(백분위 {rank*100:.0f}%) 후 {up:,.4f} 돌파 · 중심선 위 · "
                   f"15초 거래대금 {snap['surge_ratio']:.1f}배"), score
+
+
+def _sig_box(snap, st, ctx):
+    """10분 박스권 수축 → 박스 고점 돌파 + 거래량·매수 우위 (신규).
+
+    좁게 수축한 구간의 상단을 거래대금이 실리며 넘는 자리는 손절선(박스 하단)이
+    가까워 손익비가 좋다. '이미 급등한 뒤 추격'을 막기 위해 15초 급등 상한을 둔다.
+    """
+    p = st["params"]
+    if snap["coverage_10m_sec"] < p["min_coverage_10m_sec"]:
+        return False, f"10분 박스 관측 {snap['coverage_10m_sec']:.0f}s < {p['min_coverage_10m_sec']}s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
+    box = snap.get("box_range_pct")
+    box_high = snap.get("high_10m_ex_short")
+    low = snap.get("low_10m")
+    if box is None or not box_high or not low:
+        return False, "박스 표본 없음", 0.0
+    if box > p["box_max_range_pct"]:
+        return False, f"박스 폭 {box:.2f}% > {p['box_max_range_pct']}% (수축 아님)", 0.0
+    bo = (snap["last_price"] - box_high) / box_high * 100.0
+    if bo < p["breakout_pct"]:
+        return False, f"박스 고점 대비 {bo:+.2f}% < +{p['breakout_pct']}%", bo
+    chg15 = snap.get("chg_15s_pct")
+    if chg15 is not None and chg15 > float(p.get("max_chg_15s_pct") or 99.0):
+        return False, f"15초 {chg15:+.2f}% 급등 (추격 금지 — 박스 상단 이탈)", bo
+    if snap["short_krw"] < p["min_short_krw"]:
+        return False, (f"15초 거래대금 {snap['short_krw']/1e4:,.0f}만 < "
+                       f"{p['min_short_krw']/1e4:,.0f}만"), bo
+    if snap["surge_ratio"] < p["min_surge_ratio"]:
+        return False, f"돌파 거래량 {snap['surge_ratio']:.1f}배 < {p['min_surge_ratio']:.1f}배", bo
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", bo
+    return True, (f"박스 폭 {box:.2f}% 수축 → 고점 {bo:+.2f}% 돌파 · "
+                  f"거래량 {snap['surge_ratio']:.1f}배 · 매수 {snap['bid_ratio']*100:.0f}%"), \
+        bo * 10 + snap["surge_ratio"]
+
+
+def _sig_alt_rs(snap, st, ctx):
+    """알트-BTC 디커플링 상대강도 (신규).
+
+    BTC가 제자리이거나 밀리는 동안 그 종목만 3분 수익률이 앞서는 구간은 자금 로테이션의
+    흔적이다(BTC는 알트 변동의 절반만 설명하고 리더십이 순환한다). BTC 자체는 대상에서 뺀다.
+    """
+    p = st["params"]
+    if p.get("exclude_btc") and snap.get("market") == "KRW-BTC":
+        return False, "BTC 자신은 상대강도 대상 아님", -1e9
+    if snap["coverage_sec"] < 180:
+        return False, f"3분 관측 {snap['coverage_sec']:.0f}s < 180s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
+    btc = ctx.get("btc_snap")
+    if not btc or btc.get("chg_3m_pct") is None:
+        return False, "BTC 스냅샷 없음 (상대강도 계산 불가)", 0.0
+    btc_chg = float(btc.get("chg_3m_pct") or 0.0)
+    rs = snap["chg_3m_pct"] - btc_chg
+    if rs < p["min_rs_pct"]:
+        return False, f"BTC 대비 {rs:+.2f}%p < +{p['min_rs_pct']}%p (디커플링 부족)", rs
+    if snap["chg_3m_pct"] < p["min_chg_3m_pct"]:
+        return False, f"3분 {snap['chg_3m_pct']:+.2f}% < +{p['min_chg_3m_pct']}%", rs
+    if snap["short_krw"] < p["min_short_krw"]:
+        return False, (f"15초 거래대금 {snap['short_krw']/1e4:,.0f}만 < "
+                       f"{p['min_short_krw']/1e4:,.0f}만"), rs
+    if snap["surge_ratio"] < p["min_surge_ratio"]:
+        return False, f"거래량 {snap['surge_ratio']:.1f}배 < {p['min_surge_ratio']:.1f}배", rs
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", rs
+    return True, (f"BTC 대비 {rs:+.2f}%p 강세 (3분 {snap['chg_3m_pct']:+.2f}% vs BTC {btc_chg:+.2f}%) · "
+                  f"거래량 {snap['surge_ratio']:.1f}배 · 매수 {snap['bid_ratio']*100:.0f}%"), rs
+
+
+def _sig_tape(snap, st, ctx):
+    """대형 매수 체결 스파이크 = 체결 불균형 (신규).
+
+    체결 방향 불균형은 1~5분 수익률 예측력이 있고 30분 안에 사라진다(학술·실무 공통).
+    그래서 집계 비율이 아니라 '단일 대형 매수 체결'(스윕)을 보고, 보유 상한도 8분으로 짧다.
+    """
+    p = st["params"]
+    if snap["coverage_sec"] < 60:
+        return False, f"관측 {snap['coverage_sec']:.0f}s < 60s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
+    mx = float(snap.get("max_bid_krw_10s") or 0.0)
+    if mx < p["min_print_krw"]:
+        return False, (f"10초 최대 매수 체결 {mx/1e4:,.0f}만 < "
+                       f"{p['min_print_krw']/1e4:,.0f}만"), 0.0
+    avg = snap.get("avg_tick_krw_3m")
+    ratio = (mx / avg) if avg else 0.0
+    if ratio < p["min_print_mult"]:
+        return False, f"대형 체결 배수 {ratio:.1f}x < {p['min_print_mult']:.1f}x", ratio
+    if int(snap.get("ticks_10s") or 0) < p["min_ticks_10s"]:
+        return False, f"10초 체결 {int(snap.get('ticks_10s') or 0)}건 < {p['min_ticks_10s']}건", ratio
+    chg15 = snap.get("chg_15s_pct")
+    if chg15 is None or chg15 < p["min_chg_15s_pct"]:
+        shown = "없음" if chg15 is None else f"{chg15:+.2f}%"
+        return False, f"15초 가격 {shown} < +{p['min_chg_15s_pct']}% (체결 후 상승 미확인)", ratio
+    if snap["bid_ratio_10s"] < p["min_bid_10s"]:
+        return False, f"10초 매수비중 {snap['bid_ratio_10s']*100:.0f}% < {p['min_bid_10s']*100:.0f}%", ratio
+    return True, (f"10초 최대 매수 체결 {mx/1e4:,.0f}만 ({ratio:.1f}x) · 15초 {chg15:+.2f}% · "
+                  f"10초 매수 {snap['bid_ratio_10s']*100:.0f}%"), ratio * snap["short_krw"] / 1e6
+
+
+def _sig_range_rev(snap, st, ctx):
+    """대형주 TOP10 10분 레인지 눌림 역추세 (30m 재설계).
+
+    대형주는 20분 안에 2%를 못 간다. 대신 10분 레인지의 하단(-0.35~-1.2%)에서 매수 우위가
+    나오는 자리는 되돌림 폭이 작아 0.9%/0.6% 밴드로도 손익비가 성립한다.
+    """
+    p = st["params"]
+    if snap["market"] not in ctx["top_markets"]:
+        return False, f"24h 거래대금 TOP{p['top_n']} 대형주 아님", 0.0
+    if snap["coverage_10m_sec"] < p["min_coverage_10m_sec"]:
+        return False, f"10분 관측 {snap['coverage_10m_sec']:.0f}s < {p['min_coverage_10m_sec']}s", 0.0
+    ok, why = _market_gates(snap, st)
+    if not ok:
+        return False, why, 0.0
+    dd = snap.get("drawdown_from_high_pct")
+    if dd is None:
+        return False, "고점 표본 없음", 0.0
+    if dd > p["dd_max_pct"]:
+        return False, (f"고점 대비 {dd:+.2f}% (눌림 부족, {p['dd_min_pct']}~{p['dd_max_pct']}% 필요)"), -dd
+    if dd < p["dd_min_pct"]:
+        return False, f"고점 대비 {dd:+.2f}% (하락 과다 — 떨어지는 칼날)", -dd
+    if snap["bid_ratio"] < p["min_bid_ratio"]:
+        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", 0.0
+    ago = snap.get("price_15s_ago")
+    if not ago:
+        return False, "15초 가격 이력 없음", 0.0
+    reb = (snap["last_price"] - ago) / ago * 100.0
+    if reb < p["min_rebound_pct"]:
+        return False, f"15초 반등 {reb:+.2f}% < +{p['min_rebound_pct']}%", reb
+    return True, (f"TOP{p['top_n']} 레인지 눌림 {dd:+.2f}% · 15초 반등 {reb:+.2f}% · "
+                  f"매수 {snap['bid_ratio']*100:.0f}%"), reb
 
 
 SIGNAL_FNS = {
@@ -797,10 +1256,11 @@ SIGNAL_FNS = {
     "panic_bounce": _sig_panic_bounce,
     "pullback": _sig_pullback,
     "vwap": _sig_vwap,
-    "streak": _sig_streak,
-    "major": _sig_major,
-    "rsi": _sig_rsi,
     "bb": _sig_bb,
+    "box": _sig_box,
+    "alt_rs": _sig_alt_rs,
+    "tape": _sig_tape,
+    "range_rev": _sig_range_rev,
 }
 
 
@@ -845,14 +1305,17 @@ def _enter(st, snap, now, stream, why):
     invest = float(st["cash_krw"])
     if invest <= 0:
         return None
-    price = float(snap["last_price"])
-    if price <= 0:
+    ref_price = float(snap["last_price"])
+    if ref_price <= 0:
         return None
+    price = fill_buy(ref_price)        # v5.0: 관측 체결가 + 1틱(ask)로 산다
     qty = (invest * (1 - FEE_RATE)) / price
     st["position"] = {
         "market": market,
         "name": name,
         "entry_price": price,
+        "ref_price": ref_price,
+        "cost_pct": round(cost_pct(price), 3),
         "highest_price": price,
         "coin_qty": qty,
         "cost_krw": invest,
@@ -881,6 +1344,8 @@ def _enter(st, snap, now, stream, why):
         "name": name,
         "entry_time": fmt(now),
         "entry_price": price,
+        "ref_price": ref_price,
+        "cost_pct": round(cost_pct(price), 3),
         "cost_krw": round(invest),
         "surge_ratio": round(snap["surge_ratio"], 2),
         "bid_ratio": round(snap["bid_ratio"], 3),
@@ -922,6 +1387,7 @@ def _aggregate(state, stream):
         st["entry"] = STRATEGIES[key]["entry"]
         st["exit"] = STRATEGIES[key]["exit"]
         st["btc_filter"] = bool(STRATEGIES[key]["btc_filter"])
+        st["role"] = STRATEGIES[key].get("role", st.get("role"))
         st["params"] = dict(STRATEGIES[key]["params"])      # 규칙 파라미터는 코드 정의를 따른다
         if not isinstance(st.get("symbol_cooldowns"), dict):
             st["symbol_cooldowns"] = {}
@@ -948,6 +1414,7 @@ def _aggregate(state, stream):
             "name": st["name"],
             "style": st["style"],
             "carried_over": bool(st.get("carried_over")),
+            "role": STRATEGIES[key].get("role"),
             "equity": round(equity),
             "ret_pct": st["current_ret_pct"],
             "trades": tr,
@@ -1025,7 +1492,7 @@ def run_sniper_tick(stream=None):
             _ensure_guard["ts"] = now_ts
             state = ensure_v4_state()
         if state.get("version") != VERSION or not isinstance(state.get("strategies"), dict):
-            return {"status": "MIGRATION_WAIT", "event": "v4.0 승계 대기 (Gist 로드 재시도 중)",
+            return {"status": "MIGRATION_WAIT", "event": f"v{VERSION} 승계 대기 (Gist 로드 재시도 중)",
                     "equity": state.get("current_equity"), "ret_pct": state.get("current_ret_pct"),
                     "trades": state.get("total_trades")}
 
@@ -1044,6 +1511,19 @@ def run_sniper_tick(stream=None):
         if not st.get("position"):
             continue
         pos = st["position"]
+        # v5.0 규칙 재설계로 승계된 포지션은 새 청산 규칙을 적용하지 않고 시장가로 정리한다
+        if pos.get("force_exit_reason"):
+            price = _position_price(pos, stream)
+            if not price:
+                st["last_event"] = "⏳ 재설계 포지션 정리 대기 — 시세 수신 중"
+                continue
+            pnl, gain = _close_position(
+                st, price, f"♻️ {pos['force_exit_reason']}", now, "RESET_EXIT")
+            st["last_event"] = (f"♻️ {pos.get('name', pos['market'])}({pos['market']}) "
+                                f"규칙 재설계 정리 {gain:+.2f}% / {pnl:+,.0f}원")
+            events.append(f"[{st['label']}] {st['last_event']}")
+            exited_now.add(key)
+            continue
         # 제외 마켓(스테이블코인) 보유 포지션은 규칙 평가 없이 정상 정리한다
         if is_excluded_market(pos.get("market")):
             price = _position_price(pos, stream)
@@ -1084,8 +1564,9 @@ def run_sniper_tick(stream=None):
                 snaps.append(_attach_candles(snap))
 
     top_markets = set(stream.top_markets(10)) if (stream is not None and hasattr(stream, "top_markets")) else set()
+    btc_snap = next((s for s in snaps if s.get("market") == "KRW-BTC"), None)
     ctx = {"state": state, "top_markets": top_markets, "btc": btc, "bearish": bearish,
-           "now": now}
+           "btc_snap": btc_snap, "now": now}
 
     # ---------- 3. 전략별 신규 진입 ----------
     for key in STRATEGY_KEYS:
@@ -1116,6 +1597,13 @@ def run_sniper_tick(stream=None):
 
         st["status"] = "WAITING_FOR_SIGNAL"
         if stream is None:
+            continue
+
+        cap = st["params"].get("max_trades_per_day")
+        if cap and _trades_today(st, now) >= int(cap):
+            st["status"] = "DAILY_CAP"
+            st["last_event"] = (f"🧾 1일 거래 상한 {int(cap)}회 도달 — 수수료 예산 소진, "
+                                f"신규 진입 중단 (내일 리셋)")
             continue
 
         best_ok, best_any = _evaluate_strategy(key, snaps, ctx)

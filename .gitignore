@@ -1,9 +1,21 @@
 __pycache__/
 *.pyc
+
+# secrets / local env
 .env
-tests/_test_state.json
+.env.local
+
+# 로컬 상태·영속화 산출물 (공개 저장소에 올리지 않는다)
+state.json
+state.json.tmp
+gist_info.json
 _tmp/
+
+# 로컬 전용 도구 (토큰을 읽는 스크립트)
 create_gist.py
 upload_to_github.py
-gist_info.json
 _ws_probe*.py
+
+# 테스트 산출물
+tests/_test_state.json
+tests/_smoke_state.json

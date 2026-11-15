@@ -37,7 +37,7 @@
 | **카드 없는 24시간 호스팅** | **Render Free Web Service** (월 750시간 무료)<br>• 31일 기준 744시간 소모로 750시간 한도 내 안전 가동 | **0원** / 카드 0개 (이메일/깃허브 가입) |
 | **15분 무요청 슬립 방지** | **Cloudflare Workers Cron Trigger**<br>• 10분마다 `/health` 엔드포인트로 자동 GET 핑 발송 | **0원** / 카드 0개 (일 10만 회 무료) |
 | **플랫폼 어뷰징 제재 회피** | **실제 웹 대시보드 통합 서빙**<br>• 백그라운드 매크로가 아닌 정상적인 실시간 금융 웹앱으로 위장 | 합법적 Web Service 트래픽 인정 |
-| **재부팅 시 데이터 증발** | **GitHub Gist API 원격 상태 동기화**<br>• 매매 체결 시 `state.json`을 Gist에 자동 커밋<br>• 컨테이너 시작 시 Gist에서 최신 잔고/전적 즉시 복원 | **0원** / 카드 0개 (기존 부캐 계정 활용) |
+| **재부팅 시 데이터 증발** | **GitHub Gist API 원격 상태 동기화**<br>• 매매 체결 시 `state.json`을 Gist에 자동 커밋<br>• 컨테이너 시작 시 Gist에서 최신 잔고/전적 즉시 복원 | **0원** / 카드 0개 (기존 계정 활용) |
 
 ---
 
@@ -59,19 +59,19 @@
    - `requirements.txt`: `fastapi`, `uvicorn`, `requests`, `jinja2`
    - `render.yaml` 또는 기본 구동 커맨드: `uvicorn main:app --host 0.0.0.0 --port $PORT`
 
-### Phase 2. 익명 깃허브 리포지토리 생성
-1. '김도현' 부캐 깃허브 계정에 비공개 저장소 `dohyeon-sniper-bot` 생성
+### Phase 2. 깃허브 리포지토리 생성
+1. '김도현' 계정에 **공개** 저장소 `dohyeon-sniper-bot` 생성 (비밀키·실명·내부 경로 없이 공개 유지)
 2. 코드 및 템플릿 푸시
-3. Gist 접근용 GitHub Personal Access Token 발급
+3. Gist 접근용 GitHub Personal Access Token 발급 — **코드/저장소에 넣지 않고 Render 환경변수로만** 등록
 
 ### Phase 3. Render 무료 웹 서비스 배포
 1. Render.com 접속 후 깃허브 간편 로그인 (신용카드 등록 스킵)
 2. `New +` -> `Web Service` 선택 후 `dohyeon-sniper-bot` 연결
 3. 무료 인스턴스 타입(`Free`) 지정
-4. 환경 변수 등록:
-   - `GITHUB_TOKEN`: 상태 백업용 토큰
-   - `GIST_ID`: `state.json` 저장용 Gist ID
-5. 배포 완료 후 라이브 URL 확보 (`https://dohyeon-sniper.onrender.com`)
+4. 환경 변수 등록 (값은 저장소에 커밋하지 않음, `.env.example` 참고):
+   - `GIST_TOKEN`: 상태 백업용 토큰
+   - `GIST_ID`: `state.json` 저장용 비공개 Gist ID
+5. 배포 완료 후 라이브 URL 확보 (`https://dohyeon-sniper-bot.onrender.com`)
 
 ### Phase 4. Cloudflare Worker Keep-Alive 핑 설정
 1. Cloudflare 대시보드 로그인 (카드 불필요)
@@ -80,7 +80,7 @@
    ```javascript
    export default {
      async scheduled(event, env, ctx) {
-       await fetch("https://dohyeon-sniper.onrender.com/health");
+       await fetch("https://dohyeon-sniper-bot.onrender.com/health");
      }
    };
    ```

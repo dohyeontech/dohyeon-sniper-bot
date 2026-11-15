@@ -264,7 +264,10 @@ class UpbitTradeStream:
           · 10초 창: krw_10s, bid_ratio_10s, ticks_10s
           · 3분 창: base_krw, base_ticks, baseline_15s_krw, surge_ratio, chg_3m_pct,
                     low_3m, vwap_3m(체결가 가중 평균)
-          · 10분 창: high_10m, coverage_10m_sec, drawdown_from_high_pct
+          · 10분 창: high_10m, low_10m, high_10m_ex_short(직전 15초 제외 박스 고점),
+                    ticks_10m, range_10m_pct, box_range_pct, coverage_10m_sec,
+                    drawdown_from_high_pct
+          · 체결 불균형: max_bid_krw_10s(10초 내 최대 매수 단일 체결 금액), avg_tick_krw_3m
           · 가격 이력: price_15s_ago, price_30s_ago, chg_15s_pct
         """
         if is_excluded_market(market):
@@ -284,14 +287,15 @@ class UpbitTradeStream:
         ago_30s = now_ms - 30_000
 
         short_krw = short_bid_krw = base_krw = 0.0
-        micro_krw = micro_bid_krw = 0.0
+        micro_krw = micro_bid_krw = micro_max_bid = 0.0
         vwap_krw = vwap_vol = 0.0
         base_ticks = micro_ticks = 0
         earliest_ts = earliest_mid_ts = None
         last_ts = 0
         first_price = last_price = None
         price_15 = price_30 = None
-        high_10m = low_3m = None
+        high_10m = low_10m = high_10m_ex_short = low_3m = None
+        ticks_10m = 0
 
         for ts, price, krw, is_bid in rows:
             if ts > now_ms + 5_000:
@@ -308,8 +312,13 @@ class UpbitTradeStream:
             if ts >= mid_start:
                 if earliest_mid_ts is None:
                     earliest_mid_ts = ts
+                ticks_10m += 1
                 if high_10m is None or price > high_10m:
                     high_10m = price
+                if low_10m is None or price < low_10m:
+                    low_10m = price
+                if ts <= ago_15s and (high_10m_ex_short is None or price > high_10m_ex_short):
+                    high_10m_ex_short = price
             if ts < base_start:
                 continue
 
@@ -336,6 +345,8 @@ class UpbitTradeStream:
                     micro_ticks += 1
                     if is_bid:
                         micro_bid_krw += krw
+                        if krw > micro_max_bid:
+                            micro_max_bid = krw
             last_price = price
 
         if earliest_ts is None or last_price is None:
@@ -353,6 +364,11 @@ class UpbitTradeStream:
         chg_15s = ((last_price - price_15) / price_15 * 100.0) if price_15 else None
         dd_high = ((last_price - high_10m) / high_10m * 100.0) if high_10m else None
         cov_10m = min((now_ms - earliest_mid_ts) / 1000.0, mid_sec) if earliest_mid_ts else 0.0
+        range_10m = (((high_10m - low_10m) / last_price * 100.0)
+                     if (high_10m and low_10m and last_price) else None)
+        box_high = high_10m_ex_short if high_10m_ex_short else high_10m
+        box_range = (((box_high - low_10m) / last_price * 100.0)
+                     if (box_high and low_10m and last_price) else None)
 
         return {
             "market": market,
@@ -370,6 +386,13 @@ class UpbitTradeStream:
             "chg_3m_pct": chg_pct,
             "low_3m": low_3m,
             "high_10m": high_10m,
+            "low_10m": low_10m,
+            "high_10m_ex_short": box_high,
+            "ticks_10m": ticks_10m,
+            "range_10m_pct": range_10m,
+            "box_range_pct": box_range,
+            "max_bid_krw_10s": micro_max_bid,
+            "avg_tick_krw_3m": (base_krw / base_ticks) if base_ticks else None,
             "drawdown_from_high_pct": dd_high,
             "vwap_3m": (vwap_krw / vwap_vol) if vwap_vol > 0 else None,
             "price_15s_ago": price_15,

@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>🏆 10대 단타 전략 실시간 비교 리그 v4.0</title>
+<title>🏆 10대 단타 전략 실시간 비교 리그 v5.0</title>
 <style>
   @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
   :root{
@@ -138,12 +138,12 @@
     <div>
       <div class="badges">
         <span class="badge b-brand">도현의 테크브리프</span>
-        <span class="badge b-gold">🏆 v4.0 · 10전략 리그</span>
+        <span class="badge b-gold">🏆 v5.0 · 10전략 리그</span>
         <span id="wsBadge" class="badge b-wait"><span class="dot off"></span>WS 연결 확인 중</span>
         <span id="btcBadge" class="badge b-wait">BTC 필터 확인 중</span>
       </div>
-      <h1>🏆 10대 단타 전략 실시간 비교 리그 v4.0</h1>
-      <div class="sub" id="subline">업비트 실시간 체결 스트림 1개 · 10개 독립 가상 계좌 동시 운용 · 전략당 모의 시드 200만 원(총 2,000만 원)</div>
+      <h1>🏆 10대 단타 전략 실시간 비교 리그 v5.0</h1>
+      <div class="sub" id="subline">업비트 실시간 체결 스트림 1개 · 10개 독립 가상 계좌 동시 운용 · 전략당 모의 시드 200만 원(총 2,000만 원) · 체결 모델 수수료 0.10% + 호가 1틱</div>
     </div>
     <div style="text-align:right">
       <div class="small">마지막 엔진 판단</div>
@@ -152,14 +152,20 @@
   </header>
 
   <div class="tabs">
-    <button class="tab active" data-tab="v4" onclick="showTab('v4')">🏆 v4.0 리그 (10전략)</button>
+    <button class="tab active" data-tab="v4" onclick="showTab('v4')">🏆 v5.0 리그 (10전략)</button>
+    <button class="tab" data-tab="v4a" onclick="showTab('v4a')">📊 v4.0 진단</button>
     <button class="tab" data-tab="v2" onclick="showTab('v2')">📦 v2.0 아카이브</button>
     <button class="tab" data-tab="v1" onclick="showTab('v1')">📦 v1.0 아카이브</button>
   </div>
 
-  <!-- ================= v4 LEAGUE ================= -->
+  <!-- ================= v5 LEAGUE ================= -->
   <section id="tab-v4">
     <div class="aggstrip card" id="aggStrip" style="margin-bottom:10px">통합 지표 불러오는 중…</div>
+
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:13px;font-weight:800">🔬 v4.0 실거래 진단 → v5.0 개편</div>
+      <div class="small" id="diagText" style="margin-top:6px;line-height:1.65">불러오는 중…</div>
+    </div>
 
     <h2>🥇 실시간 수익률 리더보드 <span class="hint">— 1위부터 10위, 행을 누르면 전략 상세</span></h2>
     <div class="board">
@@ -229,13 +235,16 @@
       </div>
     </div>
     <div class="note">
-      공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 모멘텀·돌파 8전략 신규 진입 차단(보유 유지).
-      역추세 2전략(<b>투매 반등</b>·<b>RSI 과매도</b>)은 BTC 필터 예외로 하락 추세에서도 진입합니다.
+      <b>v5.0 공통 비용·유니버스 규칙</b> — ① <b>변동성 게이트</b>: 10분 레인지가 전략별 하한(0.35~1.2%) 미만인 종목은 진입하지 않습니다.
+      BTC·ETH 같은 대형주는 20분에 0.2~0.4%밖에 못 움직여 2% 목표에 닿을 수 없으므로 자동 제외됩니다(v4.0 손실 -313,638원의 진원지).
+      ② <b>비용 게이트</b>: 목표 익절폭이 왕복 실비용(수수료 0.10% + 호가 1틱)의 5배 미만이면 진입하지 않습니다(128원 종목은 1틱이 0.78%).
+      ③ <b>1일 거래 상한</b>: 전략별 하루 청산 10~14회로 수수료 예산을 강제합니다(v4.0은 12시간에 20왕복 = 계좌의 1.9%를 수수료로 소진).
+      ④ <b>체결 모델</b>: 매수 관측가 +0.5틱 / 매도 관측가 -0.5틱. 목표 익절은 목표가 체결(초과분 미반영·보수적).
+      <br>공통 리스크 규칙 — BTC 15분봉 20이평 대비 <b>-0.2% 초과 하회</b> 시 모멘텀·돌파 9전략 신규 진입 차단(보유 유지).
+      역추세 1전략(<b>투매 반등</b>)만 BTC 필터 예외로 하락 추세에서도 진입합니다.
       <b>스테이블코인(KRW-USDT·KRW-USDC 등)은 구독·1분봉 수집·신호 판정·체결에서 전면 제외</b>합니다 — 가격이 페그에 고정돼
       목표 익절에 닿을 수 없고 변이 0이라 밴드 수축·유동성 상위 조건만 통과해 수수료만 누수되기 때문입니다(보유 중이면 정상 정리).
-      <b>RSI 과매도</b>는 청산한 종목을 30분간 재진입하지 않고(떨어지는 칼날 방어, 15초 반등 + 매수 70% 필수),
-      <b>투매 반등</b>은 +1.3% 트레일링으로 이익을 지키며 손절한 종목은 15분간 재진입하지 않습니다.
-      목표 익절은 목표가 체결(초과분 미반영·보수적), 손절·트레일링·시간초과는 관측 틱 가격 체결(슬리피지 반영). 수수료 왕복 0.05%.
+      재설계·신규 전략은 청산 사유와 무관하게 같은 종목 재진입을 15~20분 금지해 한 종목 몰빵을 막습니다.
       손절 시에만 전략별 쿨다운이 걸리며 그 쿨다운도 계좌별로 독립입니다.
     </div>
 
@@ -248,6 +257,26 @@
         </table>
       </div>
     </div>
+  </section>
+
+  <!-- ================= v4 DIAGNOSIS ARCHIVE ================= -->
+  <section id="tab-v4a" class="hidden">
+    <div class="card" style="margin-bottom:10px">
+      <div style="font-size:14px;font-weight:800">📊 v4.0 진단 아카이브</div>
+      <div class="small" id="v4aPeriod" style="margin-top:4px">불러오는 중…</div>
+    </div>
+    <div class="grid g4" id="v4aStats"></div>
+    <div class="note" id="v4aNote" style="margin-top:10px"></div>
+    <h2>🧾 전략별 최종 성적표와 진단 <span class="hint">— 퇴출 / 재설계 / 규칙 유지</span></h2>
+    <div class="card" style="padding:6px"><div style="overflow-x:auto"><table>
+      <thead><tr><th>전략</th><th>결정</th><th style="text-align:right">최종자산</th><th style="text-align:right">수익률</th><th style="text-align:right">전적</th><th style="text-align:right" class="lib">최근20 시간초과</th><th>진단</th></tr></thead>
+      <tbody id="v4aRows"><tr><td colspan="7" class="neu" style="padding:14px">불러오는 중…</td></tr></tbody>
+    </table></div></div>
+    <h2>📜 퇴출 전략 매매 기록 <span class="hint">— 최근 20건씩</span></h2>
+    <div class="card" style="padding:6px"><div class="scroll"><table>
+      <thead><tr><th>전략</th><th>종목</th><th style="text-align:right">진입</th><th style="text-align:right">청산</th><th style="text-align:right">손익%</th><th style="text-align:right">손익(원)</th><th>청산 사유</th></tr></thead>
+      <tbody id="v4aTrades"><tr><td colspan="7" class="neu" style="padding:14px">불러오는 중…</td></tr></tbody>
+    </table></div></div>
   </section>
 
   <!-- ================= ARCHIVES ================= -->
@@ -320,7 +349,8 @@ const builtCards = {};
 
 function showTab(t){
   document.querySelectorAll('.tab').forEach(b => b.classList.toggle('active', b.dataset.tab === t));
-  ['v4','v2','v1'].forEach(x => $('tab-'+x).classList.toggle('hidden', x !== t));
+  ['v4','v4a','v2','v1'].forEach(x => $('tab-'+x).classList.toggle('hidden', x !== t));
+  if (t === 'v4a') loadV4Archive();
   if (t === 'v2') loadArchive('v2');
   if (t === 'v1') loadArchive('v1');
 }
@@ -415,8 +445,8 @@ function renderBoard(d){
     q('rank').className = r.rank <= 3 ? 'rk'+r.rank : '';
     q('name').textContent = r.name || r.label;
     const kind = q('kind');
-    kind.textContent = r.carried_over ? '승계' : '신규';
-    kind.className = 'pill ' + (r.carried_over ? 'p-legacy' : 'p-new');
+    kind.textContent = roleLabel(r);
+    kind.className = 'pill ' + roleCls(r);
     q('sub').textContent = `${r.key} · ${r.style||''}`;
     const bar = q('bar');
     bar.style.width = Math.min(100, Math.abs(ret)/maxAbs*100).toFixed(1) + '%';
@@ -501,6 +531,101 @@ function renderAgg(d){
         · 최하위 <b style="color:var(--red);font-size:12px">${lag?esc(lag.name||lag.label):'—'}</b>
         ${lag?`<span class="mono ${cls(lag.ret_pct)}">${pct(lag.ret_pct)}</span>`:''}</span>
     </div>`;
+  const la = d.league_all_time || {};
+  if (la.all_ret_pct != null && la.retired_initial){
+    $('aggStrip').innerHTML += `<div style="border-top:1px solid #1a2436;margin-top:7px;padding-top:6px;font-size:11px;color:var(--dim2)">
+      퇴출 3계좌(v4.0 아카이브) <b class="mono ${cls(la.retired_ret_pct)}">${pct(la.retired_ret_pct)}</b> ·
+      ${won(la.retired_equity)}원 / 시드 ${won(la.retired_initial)}원 — 라이브 수익률에 합산하지 않고 별도 보관합니다.
+      전체 13계좌 누적 <b class="mono ${cls(la.all_ret_pct)}">${pct(la.all_ret_pct)}</b> (${won(la.all_equity)}원 / ${won(la.all_initial)}원)
+      <span style="color:#4e6485">· 자세한 진단은 「📊 v4.0 진단」 탭</span></div>`;
+  }
+}
+
+function roleLabel(r){
+  if (r.role === 'kept') return '규칙 유지';
+  if (r.role === 'rebuilt') return '재설계';
+  if (r.role === 'new') return '신규';
+  return r.carried_over ? '승계' : '신규';
+}
+function roleCls(r){
+  if (r.role === 'kept') return 'p-legacy';
+  if (r.role === 'rebuilt') return 'p-cool';
+  return 'p-new';
+}
+
+function renderDiag(d){
+  const el = $('diagText');
+  if (!el) return;
+  const la = d.league_all_time || {};
+  el.innerHTML = `
+    <b style="color:#e6eefc">손실의 정체는 방향이 아니라 왕복 비용이었습니다.</b>
+    v4.0 최근 200청산의 가격손익은 <b class="up mono">+119,993원</b>이었는데 수수료 378,008원이 이를 뒤집어
+    순 <b class="down mono">-258,015원</b>이 됐습니다.<br>
+    <b style="color:#e6eefc">손실은 대형주에 몰려 있었습니다.</b>
+    BTC·ETH·XRP·SOL·DOGE 등 대형주 70건은 청산의 <b>90%가 시간초과</b>로 건당 <b class="down">-0.141%</b>(-313,638원),
+    알트 130건은 건당 <b class="up">+0.135%</b>(+55,623원). BTC의 20분 변동(0.2~0.4%)에 목표 1.5~2.5%를 건
+    <b>유니버스·밴드 불일치</b>가 원인이고 장세 탓이 아닙니다.
+    <div style="margin-top:6px"><b style="color:#e6eefc">v5.0 조치</b> — ① 변동성 게이트(10분 레인지 하한으로 대형주 자동 제외)
+    ② 비용 게이트(목표 ≥ 왕복 실비용×5) ③ 1일 거래 상한 ④ 호가 1틱 체결 반영
+    ⑤ 퇴출 3전략(RSI 과매도·대형주 스캘핑·매수 긁기) 아카이브 + 신규 3전략(박스 돌파·알트 상대강도·체결 스파이크)</div>
+    ${la.retired_initial?`<div style="margin-top:6px" class="neu">라이브 <b class="mono ${cls(la.live_ret_pct)}">${pct(la.live_ret_pct)}</b> ·
+      퇴출 3계좌 <b class="mono ${cls(la.retired_ret_pct)}">${pct(la.retired_ret_pct)}</b>(별도 보관) ·
+      전체 13계좌 <b class="mono ${cls(la.all_ret_pct)}">${pct(la.all_ret_pct)}</b></div>`:''}`;
+}
+
+let v4ArchiveLoaded = false;
+async function loadV4Archive(){
+  if (v4ArchiveLoaded) return;
+  v4ArchiveLoaded = true;
+  try{
+    const r = await fetch('/api/v4-archive', {cache:'no-store'});
+    renderV4Archive(await r.json());
+  }catch(e){ console.warn(e); v4ArchiveLoaded = false; }
+}
+
+function renderV4Archive(a){
+  if (!a || !a.strategies || !a.strategies.length){
+    $('v4aPeriod').textContent = '아카이브가 아직 없습니다 (v4.0 → v5.0 승계 시 생성) — 몇 초 뒤 다시 열어보세요.';
+    return;
+  }
+  $('v4aPeriod').textContent = `v${a.version} · ${(a.period||{}).from||'—'} ~ ${(a.period||{}).to||'—'} · 아카이브 ${a.archived_at||'—'}`;
+  const lg = a.league || {}, rt = a.retired_totals || {};
+  const card = (k, v, s, c) => `<div class="card"><div class="k">${k}</div><div class="v mono" style="color:${c||'var(--txt)'}">${v}</div><div class="s">${s||''}</div></div>`;
+  $('v4aStats').innerHTML = [
+    card('v4.0 리그 최종', won(lg.final_equity) + '원', `${lg.trades||0}전 ${lg.wins||0}승 ${lg.losses||0}패 · 시드 ${won(lg.initial_capital)}원`, cls(lg.ret_pct)),
+    card('리그 수익률', pct(lg.ret_pct), `실현 ${won(lg.realized_pnl)}원`, cls(lg.ret_pct)),
+    card('퇴출 3계좌', won(rt.final_equity) + '원', `시드 ${won(rt.initial_capital)}원 · ${rt.trades||0}전`, cls(rt.ret_pct)),
+    card('퇴출 수익률', pct(rt.ret_pct), '라이브 수익률과 분리 보관', cls(rt.ret_pct))
+  ].join('');
+  $('v4aNote').innerHTML = esc(a.note || '') +
+    `<br><b>체결 모델</b> — v4: ${esc((a.fill_model||{}).v4||'')} / v5: ${esc((a.fill_model||{}).v5||'')}. ${esc((a.fill_model||{}).note||'')}`;
+  const badge = d => d === 'retired' ? '<span class="pill p-sell">퇴출</span>'
+    : d === 'rebuilt' ? '<span class="pill p-cool">재설계</span>'
+    : '<span class="pill p-legacy">규칙 유지</span>';
+  $('v4aRows').innerHTML = a.strategies.map(s => `<tr style="cursor:default">
+      <td><b>${esc(s.name||s.label)}</b><div class="skey">${esc(s.key)}</div></td>
+      <td>${badge(s.decision)}</td>
+      <td class="mono" style="text-align:right">${won(s.final_equity)}</td>
+      <td class="mono ${cls(s.ret_pct)}" style="text-align:right;font-weight:800">${pct(s.ret_pct)}</td>
+      <td class="mono" style="text-align:right">${s.wins||0}승 ${s.losses||0}패<div class="small" style="font-size:9.5px">${s.win_rate_pct||0}%</div></td>
+      <td class="mono neu lib" style="text-align:right">${(s.recent_window||{}).time_exit_pct!=null?Math.round(s.recent_window.time_exit_pct)+'%':'—'}</td>
+      <td class="neu" style="font-size:10.5px;white-space:normal;max-width:460px;line-height:1.5">${esc(s.diagnosis||'')}</td>
+    </tr>`).join('');
+  const rows = [];
+  a.strategies.filter(s => s.decision === 'retired').forEach(s => {
+    ((s.recent_window||{}).sells || []).slice().reverse().forEach(t => {
+      rows.push(`<tr style="cursor:default">
+        <td><span class="pill p-sell">${esc(s.label)}</span></td>
+        <td><b>${esc(t.name||'')}</b> <span class="neu mono" style="font-size:9.5px">${esc(t.market||'')}</span></td>
+        <td class="mono neu" style="font-size:10px;text-align:right">${esc((t.exit_time||'').slice(5,16))}</td>
+        <td class="mono" style="text-align:right">${(t.hold_min||0).toFixed ? (t.hold_min||0).toFixed(1) : t.hold_min}분</td>
+        <td class="mono ${cls(t.gain_pct)}" style="text-align:right">${t.gain_pct!=null?pct(t.gain_pct):'—'}</td>
+        <td class="mono ${cls(t.pnl_krw)}" style="text-align:right">${t.pnl_krw!=null?won(t.pnl_krw):'—'}</td>
+        <td class="neu" style="font-size:10px">${esc(t.exit_kind||'')}</td>
+      </tr>`);
+    });
+  });
+  $('v4aTrades').innerHTML = rows.join('') || `<tr><td colspan="7" class="neu" style="padding:14px">기록 없음</td></tr>`;
 }
 
 /* ---------------- 상세 패널 ---------------- */
@@ -592,7 +717,7 @@ function renderDetail(d){
     <div class="dhead">
       <div>
         <div class="dname">${medals[r.rank-1]||''} ${r.rank}위 · ${esc(r.name||r.label)}
-          ${r.carried_over?'<span class="pill p-legacy" style="margin-left:4px">v3.1 승계</span>':'<span class="pill p-new" style="margin-left:4px">v4.0 신규</span>'}</div>
+          <span class="pill ${roleCls(r)}" style="margin-left:4px">${roleLabel(r)}</span></div>
         <div class="dsub">${esc(r.key)} · ${esc(r.style||'')} · 시드 ${won(st.initial_capital)}원 · 현금 ${won(Math.round(st.cash_krw||0))}원</div>
       </div>
       <div style="text-align:right">
@@ -646,11 +771,11 @@ function renderInfra(d){
   const btcBadge = $('btcBadge');
   if (btc.trend){
     const bear = btc.is_bearish;
-    $('btcTrend').textContent = bear ? '하락 · 모멘텀 8전략 차단 (역추세 2전략 허용)' : (btc.trend === 'BULLISH' ? '상승 · 진입 허용' : '중립 · 진입 허용');
+    $('btcTrend').textContent = bear ? '하락 · 모멘텀 9전략 진입 차단 (역추세 1전략 허용)' : (btc.trend === 'BULLISH' ? '상승 · 진입 허용' : '중립 · 진입 허용');
     $('btcTrend').style.color = bear ? 'var(--red)' : 'var(--green)';
     $('btcDetail').textContent = `BTC ${won(btc.btc_price)}원 · 20이평 ${pct(btc.diff_pct)}`;
     btcBadge.className = 'badge ' + (bear ? 'b-off' : 'b-live');
-    btcBadge.textContent = bear ? `BTC -${Math.abs(btc.diff_pct).toFixed(2)}% · 역추세 2전략만 허용` : `BTC ${pct(btc.diff_pct)} · 진입 허용`;
+    btcBadge.textContent = bear ? `BTC -${Math.abs(btc.diff_pct).toFixed(2)}% · 역추세 1전략만 허용` : `BTC ${pct(btc.diff_pct)} · 진입 허용`;
   }
   const p = d.persistence || {};
   $('gist').textContent = p.gist_enabled ? (p.gist_last_sync_ok === false ? '동기화 오류' : '동기화 중') : '비활성';
@@ -683,7 +808,7 @@ function renderScan(d){
   $('scanBody').innerHTML = rows || `<tr><td colspan="8" class="neu" style="padding:14px">틱 데이터 수집 중…</td></tr>`;
   $('scanSummary').textContent = `감시 ${scan.scanned||0}종목 · 이 순간 신호 발생 ${scan.qualified||0}종목 · ` +
     `판단 주기 ${(d.rules&&d.rules.tick_interval_sec)||1.5}초 · ` +
-    `TOP10 ${(scan.top_markets||[]).length}종목 (대형주 스캘핑 대상)`;
+    `TOP10 ${(scan.top_markets||[]).length}종목 (대형주 레인지 역추세 대상)`;
 }
 
 function renderRules(d){
@@ -740,6 +865,7 @@ function renderStatus(d){
   renderScan(d);
   renderRules(d);
   renderTrades(d);
+  renderDiag(d);
 }
 
 async function tick(){
