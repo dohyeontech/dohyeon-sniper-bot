@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     print("[Bot Engine] Shutting down.")
 
 
-app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v5.1", lifespan=lifespan)
+app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v5.2", lifespan=lifespan)
 
 
 def _trim_trades(strategy_state, keep=0):

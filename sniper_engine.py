@@ -1,5 +1,5 @@
 """
-스나이퍼 봇 v5.1 — 「단타 전략 실시간 비교 리그 (개편 + 손익비·시간초과 튜닝)」.
+스나이퍼 봇 v5.2 — 「단타 전략 실시간 비교 리그 (정체 청산 철폐 + 목표 현실화·노이즈 차단)」.
 
 업비트 실시간 WebSocket 체결 스트림 **1개** 위에서, 잔고·포지션·전적·쿨다운·매매내역이
 완전히 분리된 **10개의 독립 가상 계좌(각 시드 2,000,000원)** 를 동시에 운용한다.
@@ -70,6 +70,29 @@ v5.1 수정 (2026-11-16, 라이브 v5.0 진단)
   · **계좌 무손실 승계**: v5.0의 10계좌 잔고·전적·포지션·매매내역을 그대로 이어받는다
     (`migrate_from_v5`). v4_archive와 v4→v5 승계 이력은 보존하고, 규칙 파라미터가 실제로
     바뀐 계좌만 1일 거래 예산 시계(`rules_effective_from`)를 새 규칙 시점으로 옮긴다.
+
+v5.2 정비 (2026-11-17, 라이브 v5.1 밤사이 190전 51승 139패 -133만 원 진단)
+  · **6분 무풍 정체 청산(STAGNATION) 철폐**: v5.1이 넣은 정체 청산은 최근 청산 60건 가운데
+    33건(-86,026원)을 6분 만에 끊었다. 왕복 비용(0.2~0.5%)을 넘기기 전에 손실만 확정하고
+    TARGET 0건 · STAGNATION 33건 · TIME 15건이라는 결과를 만든 직접 원인이다. v5.2는 정체 청산
+    로직과 파라미터를 전부 제거하고, 손절 · 목표 · 트레일링 · 보유시간 상한(`max_hold_min`)으로만
+    청산한다.
+  · **모멘텀·돌파 6전략 목표 현실화**: 횡보/약세 변동성 장에서 +2.0~+2.5% 목표는 찍히지 않고
+    시간초과로 밀렸다. 3m·10m·pullback_reentry·vwap_breakout·bb_squeeze·box_breakout의 목표를
+    +1.4~+1.7%, 트레일링 발동을 +0.9~+1.0%(고점 대비 -0.30~-0.35%), 손절을 -1.2~-1.4%로 맞춰
+    수익이 날 때 확실히 챙기고 손실은 짧게 끊는다.
+  · **3m 초민감 스캘핑 조이기**: 15초 거래대금 하한 300만→800만 원, 매수(BID) 70%→78%,
+    1일 상한 10회. 3m는 125전 -49.06%로 밤 손실의 26%를 냈다 — 낮은 문턱의 허매수 진입이 원인.
+  · **alt_rs 엄선**: 180초 관측 버그를 고친 뒤에도 16전 3승 13패(18.8%)였다. 디커플링 기준
+    +0.8%p→+1.3%p, 15초 거래대금 300만→700만 원, 매수(BID) 62%→75%, 1일 상한 6회.
+  · **panic_bounce 밴드 조정**: 트레일 발동(+1.6%)이 목표(+2.0%)에 너무 가까워 이익을 못 챙겼다.
+    목표 +1.8%, 트레일 +1.2%(고점 -0.35%), 손절 -1.25%로 밸런스를 맞춘다.
+  · **30m · tape_sweep 유지**: 30m는 최근 7건 -1,056원(거의 본전), tape_sweep는 목표 +1.8% ·
+    손절 -1.0% · 8분 상한으로 이미 비용 대비 손익비가 서 있다. 규칙을 바꾸지 않으므로 두 계좌의
+    1일 거래 예산 시계도 그대로 유지된다.
+  · **무손실 승계**: `migrate_from_v5`가 v5.1의 10계좌 잔고·전적·포지션·매매내역·쿨다운을 그대로
+    이어받고 v4_archive · v5_fix 이력도 보존한다. 규칙이 바뀐 계좌만 `rules_effective_from`을
+    승계 시각으로 옮겨 1일 예산을 새로 센다.
 """
 
 import json
@@ -88,7 +111,7 @@ from market_filter import (  # noqa: E402
     is_excluded_market, STABLE_BASES, EXCLUDED_MARKETS, NOTE as MARKET_FILTER_NOTE,
 )
 
-VERSION = "5.1"
+VERSION = "5.2"
 FEE_RATE = 0.0005           # 업비트 수수료 0.05%
 TICK_INTERVAL_SEC = 1.5     # 엔진 판단 주기
 DEFAULT_SEED = 2_000_000    # 전략별 모의 시드
@@ -96,7 +119,7 @@ KST = timezone(timedelta(hours=9))
 SPREAD_TICKS = 0.5          # 편도 0.5틱 = 왕복 호가 1틱 (매수 +0.5틱, 매도 -0.5틱)
 
 LEGACY_KEYS = ("3m", "10m", "30m")
-KEPT_KEYS = ("3m", "10m", "panic_bounce")                  # 규칙 불변 · 잔고 승계 (대조군)
+KEPT_KEYS = ("3m", "10m", "panic_bounce")                  # 잔고 승계 계좌 (v5.2에서 밴드·문턱 조정)
 REBUILT_KEYS = ("30m", "pullback_reentry", "vwap_breakout", "bb_squeeze")
 NEW_KEYS = ("box_breakout", "alt_rs", "tape_sweep")
 RETIRED_KEYS = ("rsi_oversold", "major_momentum", "streak_ignition")
@@ -204,25 +227,25 @@ STRATEGIES = {
         "key": "3m", "label": "300만↑", "name": "300만↑ 급등 추격",
         "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True, "btc_filter": True,
         "role": "kept",
-        "entry": "15초 거래대금 300만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
-        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 12분(6분 ±0.25% 정체 시 청산) · 쿨다운 5분",
-        "params": {"min_short_krw": 3_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
-                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
-                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5},
+        "entry": "15초 거래대금 800만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 78%↑ · 3분변동 +0.3~+3.0%",
+        "exit": "목표 +1.5% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.3% · 최대 12분 · 쿨다운 5분 · 1일 10회",
+        "params": {"min_short_krw": 8_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.78,
+                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 1.5,
+                   "trail_activation_pct": 0.9, "trail_drop_pct": 0.30, "stop_pct": -1.3,
+                   "max_hold_min": 12, "cooldown_min": 5,
+                   "cost_mult": 5, "max_trades_per_day": 10},
     },
     "10m": {
         "key": "10m", "label": "1,000만↑", "name": "1,000만↑ 급등 추격",
         "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
         "role": "kept",
         "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
-        "exit": "목표 +2.5% · 트레일링 +1.5%→고점 -0.4% · 손절 -1.8% · 최대 12분(6분 ±0.25% 정체 시 청산) · 쿨다운 5분",
+        "exit": "목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.35% · 최대 12분 · 쿨다운 5분",
         "params": {"min_short_krw": 10_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
-                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 2.5,
-                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5},
+                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 1.6,
+                   "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.35,
+                   "max_hold_min": 12, "cooldown_min": 5,
+                   "cost_mult": 5},
     },
     # ---- 조건 재설계 4전략 (잔고·전적 승계) ----
     "30m": {
@@ -246,14 +269,13 @@ STRATEGIES = {
         "role": "rebuilt",
         "entry": ("3분 +0.5%↑ 상승 후 10분 고점 대비 -0.8~-2.0% 눌림 · 10분 레인지 1.0%↑ · "
                   "15초 BID 62%↑ + 상승 전환"),
-        "exit": ("목표 +2.4% · 트레일링 +1.5%→고점 -0.45% · 손절 -1.3% · 최대 12분"
-                 "(6분 ±0.25% 정체 시 청산) · 쿨다운 5분 · 동일종목 20분"),
+        "exit": ("목표 +1.7% · 트레일링 +1.0%→고점 -0.35% · 손절 -1.4% · 최대 12분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
         "params": {"dd_min_pct": -2.0, "dd_max_pct": -0.8, "min_bid_ratio": 0.62,
                    "min_chg_3m_pct": 0.5, "min_coverage_10m_sec": 300,
-                   "min_range_10m_pct": 1.0, "target_pct": 2.4,
-                   "trail_activation_pct": 1.5, "trail_drop_pct": 0.45, "stop_pct": -1.3,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5,
+                   "min_range_10m_pct": 1.0, "target_pct": 1.7,
+                   "trail_activation_pct": 1.0, "trail_drop_pct": 0.35, "stop_pct": -1.4,
+                   "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
                    "cost_mult": 5, "max_trades_per_day": 12},
     },
@@ -263,13 +285,12 @@ STRATEGIES = {
         "role": "rebuilt",
         "entry": ("3분 VWAP 하단에서 15초 거래대금 3.0배↑ + BID 62%↑ 동반, VWAP +0.35%↑ 돌파 · "
                   "10분 레인지 1.0%↑"),
-        "exit": ("목표 +2.0% · 트레일링 +1.1%→고점 -0.35% · 손절 -1.2% · 최대 12분"
-                 "(6분 ±0.25% 정체 시 청산) · 쿨다운 5분 · 동일종목 20분"),
+        "exit": ("목표 +1.5% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.25% · 최대 12분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
         "params": {"min_vol_ratio": 3.0, "min_bid_ratio": 0.62, "breakout_pct": 0.35,
                    "min_coverage_sec": 120, "min_range_10m_pct": 1.0,
-                   "target_pct": 2.0, "trail_activation_pct": 1.1, "trail_drop_pct": 0.35,
-                   "stop_pct": -1.2, "max_hold_min": 12, "stagnation_min": 6,
-                   "stagnation_band_pct": 0.25, "cooldown_min": 5,
+                   "target_pct": 1.5, "trail_activation_pct": 0.9, "trail_drop_pct": 0.30,
+                   "stop_pct": -1.25, "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
                    "cost_mult": 5, "max_trades_per_day": 12},
     },
@@ -279,14 +300,13 @@ STRATEGIES = {
         "role": "rebuilt",
         "entry": ("1분봉 볼린저(20,2) 수축(40봉 밴드폭 하위 20%) + 종가 > 중심선 + "
                   "상단 밴드 거래량 2.0배↑ 돌파 · 10분 레인지 0.9%↑"),
-        "exit": ("목표 +2.2% · 트레일링 +1.2%→고점 -0.35% · 손절 -1.3% · 최대 12분"
-                 "(6분 ±0.25% 정체 시 청산) · 쿨다운 5분 · 동일종목 20분"),
+        "exit": ("목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.3% · 최대 12분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
         "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.20, "min_vol_ratio": 2.0,
                    "max_candle_age_sec": 120, "require_above_mid": True,
-                   "min_range_10m_pct": 0.9, "target_pct": 2.2,
-                   "trail_activation_pct": 1.2, "trail_drop_pct": 0.35, "stop_pct": -1.3,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5,
+                   "min_range_10m_pct": 0.9, "target_pct": 1.6,
+                   "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.3,
+                   "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
                    "cost_mult": 5, "max_trades_per_day": 12},
     },
@@ -295,9 +315,9 @@ STRATEGIES = {
         "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
         "role": "kept",
         "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
-        "exit": "목표 +2.0% · 트레일링 +1.6%→고점 -0.40% · 손절 -1.3% · 최대 15분 · 쿨다운 5분 · 동일종목 15분",
-        "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 2.0,
-                   "trail_activation_pct": 1.6, "trail_drop_pct": 0.40, "stop_pct": -1.3,
+        "exit": "목표 +1.8% · 트레일링 +1.2%→고점 -0.35% · 손절 -1.25% · 최대 15분 · 쿨다운 5분 · 동일종목 15분",
+        "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 1.8,
+                   "trail_activation_pct": 1.2, "trail_drop_pct": 0.35, "stop_pct": -1.25,
                    "max_hold_min": 15, "cooldown_min": 5,
                    "symbol_cooldown_min": 15, "symbol_cooldown_scope": "stop"},
     },
@@ -308,15 +328,14 @@ STRATEGIES = {
         "role": "new",
         "entry": ("10분 박스 폭 1.1% 이하로 수축한 뒤 직전 15초 제외 박스 고점 +0.15% 돌파 · "
                   "15초 거래대금 3.0배↑ · BID 65%↑"),
-        "exit": ("목표 +2.2% · 트레일링 +1.4%→고점 -0.4% · 손절 -1.2% · 최대 12분"
-                 "(6분 ±0.25% 정체 시 청산) · 쿨다운 5분 · 동일종목 20분"),
+        "exit": ("목표 +1.4% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.2% · 최대 12분 · "
+                 "쿨다운 5분 · 동일종목 20분"),
         "params": {"box_max_range_pct": 1.1, "breakout_pct": 0.15, "min_surge_ratio": 3.0,
                    "min_bid_ratio": 0.65, "min_short_krw": 5_000_000,
                    "min_coverage_10m_sec": 540, "min_range_10m_pct": 0.3,
-                   "max_chg_15s_pct": 1.2, "target_pct": 2.2,
-                   "trail_activation_pct": 1.4, "trail_drop_pct": 0.4, "stop_pct": -1.2,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5,
+                   "max_chg_15s_pct": 1.2, "target_pct": 1.4,
+                   "trail_activation_pct": 0.9, "trail_drop_pct": 0.30, "stop_pct": -1.2,
+                   "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
                    "cost_mult": 5, "max_trades_per_day": 10},
     },
@@ -324,19 +343,18 @@ STRATEGIES = {
         "key": "alt_rs", "label": "알트 상대강도", "name": "알트-BTC 디커플링 강세",
         "style": "로테이션 · 상대강도", "kind": "alt_rs", "legacy": False, "btc_filter": True,
         "role": "new",
-        "entry": ("3분 수익률이 BTC 3분 수익률보다 +0.8%p 이상 앞서고(디커플링) 15초 거래대금 "
-                  "2.5배↑ · BID 62%↑ · 10분 레인지 0.8%↑"),
-        "exit": ("목표 +2.2% · 트레일링 +1.3%→고점 -0.4% · 손절 -1.3% · 최대 12분"
-                 "(6분 ±0.25% 정체 시 청산) · 쿨다운 5분 · 동일종목 20분"),
-        "params": {"min_rs_pct": 0.8, "min_chg_3m_pct": 0.5, "min_surge_ratio": 2.5,
-                   "min_bid_ratio": 0.62, "min_short_krw": 3_000_000,
+        "entry": ("3분 수익률이 BTC 3분 수익률보다 +1.3%p 이상 앞서고(디커플링) 15초 거래대금 "
+                  "700만↑ · BID 75%↑ · 10분 레인지 0.8%↑"),
+        "exit": ("목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.3% · 최대 12분 · "
+                 "쿨다운 5분 · 동일종목 20분 · 1일 6회"),
+        "params": {"min_rs_pct": 1.3, "min_chg_3m_pct": 0.5, "min_surge_ratio": 2.5,
+                   "min_bid_ratio": 0.75, "min_short_krw": 7_000_000,
                    "min_coverage_sec": 150, "min_range_10m_pct": 0.8,
-                   "exclude_btc": True, "target_pct": 2.2,
-                   "trail_activation_pct": 1.3, "trail_drop_pct": 0.4, "stop_pct": -1.3,
-                   "max_hold_min": 12, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-                   "cooldown_min": 5,
+                   "exclude_btc": True, "target_pct": 1.6,
+                   "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.3,
+                   "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 10},
+                   "cost_mult": 5, "max_trades_per_day": 6},
     },
     "tape_sweep": {
         "key": "tape_sweep", "label": "체결 스파이크", "name": "대형 매수 체결 스파이크",
@@ -383,10 +401,11 @@ def _rules_block():
             "volatility_gate": ("10분 레인지(%)가 전략별 하한 미만인 종목은 진입 금지 "
                                 "(대형주는 목표 도달이 불가능하므로 자동 제외)"),
             "cost_mult": ("목표 익절폭이 왕복 실비용(수수료 0.10% + 호가 1틱)의 cost_mult배(기본 5배) "
-                          "미만이면 진입 금지 — 수수료·호가 벽 방지"),
+                          "미만이면 진입 금지 — 수수료·호가 벽 방지 (v5.2부터 3m·10m 포함 8전략 적용)"),
             "daily_cap": "전략별 1일 거래(청산) 상한으로 수수료 예산을 강제",
-            "stagnation_exit": ("모멘텀·돌파 7전략(3m·10m·pullback·vwap·bb·box·alt_rs)은 진입 6분 뒤 "
-                                "수익률이 -0.25~+0.25% 안에 머물면 무풍 정체 청산(STAGNATION)"),
+            "hold_cap": ("보유 시간 상한만으로 시간 청산: 모멘텀·돌파 6전략(3m·10m·pullback·vwap·bb·box)과 "
+                         "alt_rs는 12분, 30m는 12분, panic_bounce 15분, tape_sweep 8분 — "
+                         "중간에 인위적으로 끊는 정체 청산(STAGNATION)은 v5.2에서 철폐"),
         },
         "btc_filter": {"enabled": True, "sma_window": "15분봉 20이평", "threshold_pct": -0.2,
                        "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 9전략 신규 진입 "
@@ -761,13 +780,14 @@ def migrate_from_v4(old):
 
 
 def migrate_from_v5(old):
-    """v5.0 → v5.1(손익비·시간초과 튜닝) **무손실 승계**.
+    """v5.x → v5.2(정체 청산 철폐 + 목표 현실화) **무손실 승계**.
 
     · 10계좌의 잔고·전적·포지션·쿨다운·매매내역을 그대로 이어받는다(리셋 없음).
-    · 규칙 파라미터·설명만 코드 정의(v5.1)로 교체한다. 파라미터가 실제로 바뀐 계좌는
+    · 규칙 파라미터·설명만 코드 정의(v5.2)로 교체한다. 파라미터가 실제로 바뀐 계좌는
       `rules_effective_from`을 승계 시각으로 옮겨 1일 거래 예산을 새 규칙부터 다시 센다
       (이전 규칙의 거래가 새 규칙의 하루 예산을 미리 태우지 않게 하는 기존 정책과 같다).
-    · v4_archive(퇴출 계좌 성적표)와 v4→v5 승계 이력은 보존하고, 이번 승계 내역은 `v5_fix`에 남긴다.
+    · v4_archive(퇴출 계좌 성적표)·v4→v5 승계 이력·v5_fix(v5.0→v5.1 기록)는 보존하고,
+      이번 승계 내역은 `v5_2_fix`에 남긴다.
     """
     state = new_league_state()
     old = old or {}
@@ -810,7 +830,8 @@ def migrate_from_v5(old):
         row = old_strats.get(key) or {}
         return float(row.get("current_equity") or row.get("cash_krw") or 0)
 
-    state["v5_fix"] = {
+    state["v5_fix"] = old.get("v5_fix")
+    state["v5_2_fix"] = {
         "from_version": old.get("version"),
         "to_version": VERSION,
         "at": now,
@@ -821,12 +842,15 @@ def migrate_from_v5(old):
         "carried_equity": round(sum(_equity_of(k) for k in carried)),
         "carried_positions": [k for k in carried if (old_strats.get(k) or {}).get("position")],
         "changes": [
-            "alt_rs 3분 관측 하한 180s → 150s (coverage_sec 최대값이 179.x초라 0전이었던 버그)",
-            "panic_bounce 트레일 +1.3%→+1.6%(고점 -0.40%) · 손절 -1.5%→-1.3%",
-            "모멘텀·돌파 7전략 최대 보유 20분→12분 + 6분 ±0.25% 무풍 정체 청산",
-            "30m 목표 +0.75% · 트레일 +0.50%→-0.20% · 손절 -0.50% · 최대 12분",
+            "STAGNATION(6분 무풍 정체 청산) 로직·파라미터 철폐 — 손절/목표/트레일링/시간초과로만 청산",
+            "3m 15초 거래대금 800만↑ · BID 78%↑ · 1일 10회 · 목표 +1.5%/트레일 +0.9%→-0.30%/손절 -1.3%",
+            "10m 목표 +1.6%/트레일 +0.95%→-0.32%/손절 -1.35%",
+            "pullback +1.7%/-1.4% · vwap +1.5%/-1.25% · bb +1.6%/-1.3% · box +1.4%/-1.2%",
+            "alt_rs 디커플링 +1.3%p · 15초 700만↑ · BID 75%↑ · 1일 6회 · 목표 +1.6%",
+            "panic_bounce 목표 +1.8% · 트레일 +1.2%→-0.35% · 손절 -1.25%",
+            "30m · tape_sweep 규칙 유지 (1일 거래 예산 시계도 유지)",
         ],
-        "note": "잔고·전적·포지션·매매내역 무손실 승계. 파라미터가 바뀐 계좌만 1일 거래 예산 시계를 리셋",
+        "note": ("잔고·전적·포지션·매매내역 무손실 승계. 파라미터가 바뀐 계좌만 1일 거래 예산 시계를 리셋"),
     }
     print(f"[Engine] Migrated v{old.get('version')} -> v{VERSION}: carried {len(carried)} accounts, "
           f"rules changed {changed}")
@@ -834,10 +858,10 @@ def migrate_from_v5(old):
 
 
 def ensure_league_state():
-    """Gist/로컬 상태를 현재 리그(v5.1)로 맞춘다.
+    """Gist/로컬 상태를 현재 리그(v5.2)로 맞춘다.
 
-    - 이미 v5.1이면 누락 전략만 채우고 규칙 정의를 최신화
-    - v5.x(5.0)면 **잔고·전적 무손실 승계** (파라미터만 교체, `migrate_from_v5`)
+    - 이미 v5.2면 누락 전략만 채우고 규칙 정의를 최신화
+    - v5.x(5.0·5.1)면 **잔고·전적 무손실 승계** (파라미터만 교체, `migrate_from_v5`)
     - v4.0이면 승계·재설계·퇴출 마이그레이션 (아카이브 생성)
     - 그 외/손상 상태면 10전략 × 200만 원 신규 시드
     - Gist가 설정돼 있는데 원격 로드에 실패한 경우에는 **절대 마이그레이션/원격 저장을 하지 않는다**
@@ -1080,18 +1104,9 @@ def _check_exit(st, stream, now):
             return price, (f"🛡️ 트레일링 스탑 청산 ({gain:+.2f}%, 고점 {high_gain:+.2f}% "
                            f"대비 {drop:.2f}%)"), "TRAILING"
 
-    # 4) 최대 보유 시간 (먼저 판정 — 12분을 넘긴 포지션은 '정체'가 아니라 '시간초과'다)
+    # 4) 최대 보유 시간 — v5.2부터 유일한 '시간 청산'이다 (정체 청산은 철폐).
     if held_min >= p["max_hold_min"]:
         return price, f"⏱️ {p['max_hold_min']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
-
-    # 5) 무풍 정체 청산 (v5.1) — 진입 후 N분이 지나도록 ±band 안에서 머물면 방향이 틀린 것이 아니라 없는 것이다.
-    #    보유 한도를 다 채워 수수료·기회비용만 내지 않고 6~12분 사이에 먼저 끊는다.
-    stag_min = p.get("stagnation_min")
-    if stag_min and held_min >= float(stag_min):
-        band = float(p.get("stagnation_band_pct", 0.25))
-        if abs(gain) <= band:
-            return price, (f"💤 무풍 정체 청산 ({held_min:.1f}분 ±{band:.2f}% 정체, "
-                           f"{gain:+.2f}%)"), "STAGNATION"
 
     return None
 
@@ -1102,6 +1117,9 @@ def _sig_surge(snap, st, ctx):
     p = st["params"]
     if snap["coverage_sec"] < 60:
         return False, f"관측 {snap['coverage_sec']:.0f}s < 60s", 0.0
+    ok, why = _market_gates(snap, st)      # v5.2: 목표폭이 왕복 실비용×5 미만인 종목은 추격 금지
+    if not ok:
+        return False, why, 0.0
     if snap["base_krw"] <= 0 or snap["base_ticks"] < 3:
         return False, f"기준 표본 부족({snap['base_ticks']}틱)", 0.0
     if snap["short_krw"] < float(p["min_short_krw"]):
