@@ -1080,18 +1080,18 @@ def _check_exit(st, stream, now):
             return price, (f"🛡️ 트레일링 스탑 청산 ({gain:+.2f}%, 고점 {high_gain:+.2f}% "
                            f"대비 {drop:.2f}%)"), "TRAILING"
 
-    # 4) 무풍 정체 청산 (v5.1) — 진입 후 N분이 지나도록 ±band 안에서 머물면
-    #    방향이 틀린 것이 아니라 '없는 것'이다. 12분을 묶여 수수료·기회비용만 내지 않고 끊는다.
+    # 4) 최대 보유 시간 (먼저 판정 — 12분을 넘긴 포지션은 '정체'가 아니라 '시간초과'다)
+    if held_min >= p["max_hold_min"]:
+        return price, f"⏱️ {p['max_hold_min']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
+
+    # 5) 무풍 정체 청산 (v5.1) — 진입 후 N분이 지나도록 ±band 안에서 머물면 방향이 틀린 것이 아니라 없는 것이다.
+    #    보유 한도를 다 채워 수수료·기회비용만 내지 않고 6~12분 사이에 먼저 끊는다.
     stag_min = p.get("stagnation_min")
     if stag_min and held_min >= float(stag_min):
         band = float(p.get("stagnation_band_pct", 0.25))
         if abs(gain) <= band:
             return price, (f"💤 무풍 정체 청산 ({held_min:.1f}분 ±{band:.2f}% 정체, "
                            f"{gain:+.2f}%)"), "STAGNATION"
-
-    # 5) 최대 보유 시간
-    if held_min >= p["max_hold_min"]:
-        return price, f"⏱️ {p['max_hold_min']}분 보유 제한 초과 청산 ({gain:+.2f}%)", "TIME"
 
     return None
 
