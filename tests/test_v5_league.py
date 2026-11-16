@@ -1,19 +1,21 @@
-"""v5.0 「단타 전략 비교 리그 (v4.0 진단 후 개편)」 단위 검증.
+"""v5.1 「단타 전략 비교 리그 (v5.0 손익비·시간초과 튜닝)」 단위 검증.
 
 검증 범위
   [1] 10전략 구조 (규칙 유지 3 / 재설계 4 / 신규 3, 퇴출 3, 시드 2,000만 원)
-  [2] 체결 모델 — 업비트 호가단위·왕복 실비용·매수/매도 0.5틱
+  [2] 체결 모델 — 업비트 호가단위·왕복 실비용·매수/매도 0.5틱(왕복 1틱)
   [3] ws_stream 스냅샷 신규 필드 (10분 레인지 · 박스 고점 · 대형 매수 체결)
   [4] v4.0 → v5.0 승계 (잔고·전적 보존 / 재설계 포지션 정리 / 퇴출 아카이브 / 신규 시드)
   [5] 진입 게이트 — 변동성 하한 · 비용 배수 · 1일 거래 상한 (대형주 차단)
   [6] 10전략 신호 (각 양성 + 경계 음성)
   [7] 청산 — 목표/손절/트레일링/시간초과 + 스프레드 반영
   [8] 재설계 승계 포지션 강제 정리 (RESET_EXIT)
-  [9] BTC 필터 (모멘텀·돌파 9전략 차단 + 역추세 1전략 예외)
+  [9] BTC 필터 (9전략 차단 + 역추세 1전략 예외)
   [10] 리더보드 집계
   [11] 스테이블코인 전역 제외
   [12] Gist 폴백 상태 보호
   [13] 통합 사이클(틱) — 진입 → 청산 회계
+  [14] v5.1 튜닝 — alt_rs 관측 하한 · 무풍 정체 청산(승률·보유 한도) · 30m·panic_bounce 밴드
+  [15] v5.0 → v5.1 무손실 승계 (잔고·전적·포지션·아카이브 보존)
 
 실행: python3 tests/test_v5_league.py
 """
@@ -159,9 +161,9 @@ def sig(key, s, state, top=(), btc_snap=None):
 
 
 # ------------------------------------------------------------- [1] 구조
-print("[1] 10전략 리그 구조 (v5.0)")
+print("[1] 10전략 리그 구조 (v5.1)")
 s = fresh()
-check("version 5.0", s["version"] == "5.0", s["version"])
+check("version 5.1", s["version"] == "5.1", s["version"])
 check("mode", s["mode"] == "ten_strategy_league", s["mode"])
 check("10 strategies", len(s["strategies"]) == 10, str(len(s["strategies"])))
 check("keys", list(s["strategies"].keys()) == list(E.STRATEGY_KEYS), str(list(s["strategies"])))
@@ -206,6 +208,12 @@ check("수수료 0.10% 고정분", E.cost_pct(50_000) > 0.1)
 check("fill_buy = 관측가+0.5틱", E.fill_buy(50_000) == 50_005.0, str(E.fill_buy(50_000)))
 check("fill_sell = 관측가-0.5틱", E.fill_sell(50_000) == 49_995.0, str(E.fill_sell(50_000)))
 check("fill_sell 하한", E.fill_sell(0.001) > 0)
+check("왕복 호가 = 정확히 1틱", E.fill_buy(50_000) - E.fill_sell(50_000) == E.tick_size(50_000),
+      f"{E.fill_buy(50_000) - E.fill_sell(50_000):.4f}원")
+check("SPREAD_TICKS = 편도 0.5틱", E.SPREAD_TICKS == 0.5, str(E.SPREAD_TICKS))
+check("왕복비용 = 수수료 0.10% + 1틱",
+      abs(E.cost_pct(50_000) - (0.10 + E.tick_size(50_000) / 50_000 * 100)) < 1e-9,
+      f"{E.cost_pct(50_000):.3f}%")
 
 # ------------------------------------------------------------- [3] 스냅샷 신규 필드
 print("[3] ws_stream 스냅샷 신규 필드 (10분 레인지 · 박스 고점 · 대형 매수)")
@@ -290,7 +298,7 @@ for key, (w, l, pnl, eq, pos) in seed_rows.items():
         ],
     }
 mig = E.migrate_from_v4(old)
-check("승계 version 5.0", mig["version"] == "5.0", mig["version"])
+check("승계 version 5.1 (v4→v5 규칙)", mig["version"] == "5.1", mig["version"])
 check("승계 잔고 보존 (7계좌)",
       [mig["strategies"][k]["current_equity"] for k in
        ("3m", "10m", "30m", "panic_bounce", "pullback_reentry", "vwap_breakout", "bb_squeeze")] ==
@@ -500,8 +508,8 @@ check("트레일링 트리거", hit and hit[2] == "TRAILING", str(hit))
 hit = exit_case("tape_sweep", 50_050.0, minutes=9.0)
 check("시간초과 트리거", hit and hit[2] == "TIME", str(hit))
 
-hit = exit_case("3m", 50_050.0, minutes=21.0)
-check("3m 도 20분 시간초과", hit and hit[2] == "TIME", str(hit))
+hit = exit_case("3m", 49_750.0, minutes=13.0)
+check("3m 12분 시간초과 (-0.5%는 정체 밖)", hit and hit[2] == "TIME", str(hit))
 
 hit = exit_case("3m", 50_100.0, minutes=1.0)
 check("보유 유지 (조건 미충족)", hit is None, str(hit))
@@ -613,6 +621,207 @@ check("목표 +2.5% → 스프레드 반영 2.49%", abs(ten["recent_trades"][-1]
       str(ten["recent_trades"][-1]["gain_pct"]))
 check("승 기록", ten["wins"] == 1 and ten["losses"] == 0)
 check("현금 복원", 2_045_000 < ten["cash_krw"] < 2_055_000, f"{ten['cash_krw']:,.0f}원")
+
+# ------------------------------------------------------------- [14] v5.1 튜닝
+print("[14] v5.1 튜닝 — alt_rs 관측 하한 · 무풍 정체 청산 · 밴드 현실화")
+
+# (1) 실제 ws_stream 스냅샷의 coverage_sec 은 구조상 180에 닿지 않는다 → 179.x초에서도 진입해야 한다
+ws2 = UpbitTradeStream()
+now2 = int(time.time() * 1000)
+dq = deque()
+for i in range(180):
+    ts = now2 - 179_500 + i * 1_000
+    px = 5_000.0 + i * (100.0 / 179)
+    krw = 3_000_000.0 if i >= 165 else 1_000_000.0
+    dq.append((ts, px, krw, True))
+ws2._ticks["KRW-ALT"] = dq
+sp2 = ws2.market_snapshot("KRW-ALT", now_ms=now2)
+check("실측 스냅샷 coverage_sec < 180s", sp2["coverage_sec"] < 180.0, f"{sp2['coverage_sec']:.1f}s")
+ok, why, _ = sig("alt_rs", sp2, s2, btc_snap=snap("KRW-BTC", price=90_000_000.0, chg=0.1))
+check("alt_rs 179.x초 관측에서 진입 (0전 버그 회귀)", ok, why)
+ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.6, range_10m_pct=1.5, surge=3.0,
+                                coverage_sec=149.0), s2, btc_snap=btc_flat)
+check("alt_rs 관측 149초는 여전히 대기", not ok and "3분 관측" in why, why)
+check("alt_rs min_coverage_sec = 150",
+      E.STRATEGIES["alt_rs"]["params"].get("min_coverage_sec") == 150)
+
+# (2) 무풍 정체 청산 (진입 6분 뒤 ±0.25%)
+s8 = fresh()
+fs6 = FakeStream()
+
+
+def hold_case(key, gain_pct, minutes, entry=50_000.0):
+    stx = s8["strategies"][key]
+    stx["cash_krw"] = 2_000_000.0
+    stx["cooldown_until"] = None
+    force_position(s8, key, market="KRW-T", price=entry)
+    stx["position"]["entry_ts_ms"] = E._now_ms() - int(minutes * 60_000)
+    fs6.price["KRW-T"] = entry * (1 + gain_pct / 100.0)
+    fs6.snaps["KRW-T"] = snap(market="KRW-T", price=fs6.price["KRW-T"])
+    return E._check_exit(stx, fs6, E.kst_now())
+
+
+hit = hold_case("pullback_reentry", 0.10, 7.0)
+check("6분 뒤 +0.10% 정체 → STAGNATION", hit and hit[2] == "STAGNATION", str(hit))
+hit = hold_case("pullback_reentry", -0.20, 8.0)
+check("6분 뒤 -0.20% 정체 → STAGNATION", hit and hit[2] == "STAGNATION", str(hit))
+hit = hold_case("pullback_reentry", 0.10, 5.0)
+check("5분 시점은 정체 청산 안 함", hit is None, str(hit))
+hit = hold_case("pullback_reentry", 0.60, 7.0)
+check("6분 뒤 +0.60%는 계속 보유", hit is None, str(hit))
+hit = hold_case("pullback_reentry", -0.45, 7.0)
+check("-0.45%는 밖이라 보유 유지 (조기 절단 아님)", hit is None, str(hit))
+hit = hold_case("pullback_reentry", -0.30, 12.5)
+check("12분 초과 → TIME", hit and hit[2] == "TIME", str(hit))
+hit = hold_case("panic_bounce", 0.10, 7.0)
+check("panic_bounce 는 정체 청산 대상 아님", hit is None, str(hit))
+
+# (3) 보유 한도·밴드 현실화
+HOLD12 = ("3m", "10m", "30m", "pullback_reentry", "vwap_breakout", "bb_squeeze",
+          "box_breakout", "alt_rs")
+check("모멘텀·돌파 7전략 + 30m = 12분 상한",
+      all(E.STRATEGIES[k]["params"]["max_hold_min"] == 12 for k in HOLD12),
+      str({k: E.STRATEGIES[k]["params"]["max_hold_min"] for k in HOLD12}))
+check("정체 청산은 7전략에만 설정",
+      all(E.STRATEGIES[k]["params"].get("stagnation_min") == 6 for k in HOLD12 if k != "30m")
+      and E.STRATEGIES["30m"]["params"].get("stagnation_min") is None
+      and E.STRATEGIES["panic_bounce"]["params"].get("stagnation_min") is None)
+check("panic_bounce 트레일 1.6→-0.40 / 손절 -1.3",
+      E.STRATEGIES["panic_bounce"]["params"]["trail_activation_pct"] == 1.6
+      and E.STRATEGIES["panic_bounce"]["params"]["trail_drop_pct"] == 0.40
+      and E.STRATEGIES["panic_bounce"]["params"]["stop_pct"] == -1.3)
+check("30m 목표 0.75 / 트레일 0.50→-0.20 / 손절 -0.50 / 12분",
+      E.STRATEGIES["30m"]["params"]["target_pct"] == 0.75
+      and E.STRATEGIES["30m"]["params"]["trail_activation_pct"] == 0.50
+      and E.STRATEGIES["30m"]["params"]["trail_drop_pct"] == 0.20
+      and E.STRATEGIES["30m"]["params"]["stop_pct"] == -0.50)
+
+# ------------------------------------------------------------- [15] v5.0 → v5.1
+print("[15] v5.0 → v5.1 무손실 승계")
+
+
+def _old_params(k):
+    p = dict(E.STRATEGIES[k]["params"])
+    p.pop("stagnation_min", None)
+    p.pop("stagnation_band_pct", None)
+    if k in ("3m", "10m", "state", "30m", "pullback_reentry", "vwap_breakout", "bb_squeeze",
+             "box_breakout", "alt_rs"):
+        p["max_hold_min"] = 20
+    if k == "alt_rs":
+        p.pop("min_coverage_sec", None)
+    if k == "panic_bounce":
+        p.update({"trail_activation_pct": 1.3, "trail_drop_pct": 0.35, "stop_pct": -1.5})
+    if k == "30m":
+        p.update({"target_pct": 0.9, "trail_activation_pct": 0.6, "trail_drop_pct": 0.25,
+                  "stop_pct": -0.6})
+    return p
+
+
+row_src = {
+    "3m": (82, 26, 56, -628_073, 1_371_927,
+           {"market": "KRW-NEAR", "name": "니어", "entry_price": 2_400.0, "coin_qty": 570.0,
+            "cost_krw": 1_368_000, "highest_price": 2_400.0, "entry_time": "2026-11-16 20:00:00",
+            "entry_ts_ms": 1, "last_price": 2_400.0}),
+    "10m": (65, 24, 41, -360_424, 1_639_576,
+            {"market": "KRW-NEAR", "name": "니어", "entry_price": 2_400.0, "coin_qty": 680.0,
+             "cost_krw": 1_632_000, "highest_price": 2_400.0, "entry_time": "2026-11-16 20:05:00",
+             "entry_ts_ms": 2, "last_price": 2_400.0}),
+    "30m": (38, 11, 27, -212_494, 1_787_506, None),
+    "panic_bounce": (59, 30, 29, -443_174, 1_556_826, None),
+    "pullback_reentry": (55, 20, 35, -374_242, 1_625_758, None),
+    "vwap_breakout": (46, 14, 32, -338_803, 1_661_197, None),
+    "bb_squeeze": (38, 14, 24, -119_012, 1_880_988,
+                   {"market": "KRW-PIEVERSE", "name": "피버스", "entry_price": 100.0,
+                    "coin_qty": 18_800.0, "cost_krw": 1_880_000, "highest_price": 100.0,
+                    "entry_time": "2026-11-16 20:10:00", "entry_ts_ms": 3, "last_price": 100.0}),
+    "box_breakout": (13, 3, 10, -89_240, 1_910_760, None),
+    "alt_rs": (0, 0, 0, 0, 2_000_000, None),
+    "tape_sweep": (20, 6, 14, -94_339, 1_905_661, None),
+}
+TA_OLD = "2026-11-15 22:08:48"
+v50 = {"version": "5.0", "mode": "ten_strategy_league", "initialized_at": "2026-11-15 22:08:48",
+       "initial_capital": 20_000_000, "current_equity": 12_447_708, "current_ret_pct": -37.76,
+       "peak_equity": 20_000_000, "max_drawdown_pct": 37.76, "total_trades": 416,
+       "wins": 148, "losses": 268, "total_realized_pnl": -2_659_801.23,
+       "v4_archive": {"version": "4.0", "retired_totals": {"count": 3, "final_equity": 5_219_340,
+                                                          "initial_capital": 6_000_000,
+                                                          "ret_pct": -13.01}},
+       "migrated_from": {"version": "4.0", "at": "2026-11-15 22:08:48", "carried_trades": 230},
+       "strategies": {}}
+for k, (tr, w, l, pnl, cash, pos) in row_src.items():
+    v50["strategies"][k] = {
+        "key": k, "label": s["strategies"][k]["label"], "name": s["strategies"][k]["name"],
+        "kind": E.STRATEGIES[k]["kind"], "initial_capital": 2_000_000.0, "cash_krw": float(cash),
+        "position": dict(pos) if pos else None, "cooldown_until": None, "symbol_cooldowns": {},
+        "total_realized_pnl": float(pnl), "total_trades": tr, "wins": w, "losses": l,
+        "current_equity": float(cash), "peak_equity": 2_000_000.0, "max_drawdown_pct": 10.0,
+        "params": _old_params(k), "entry": "old entry", "exit": "old exit",
+        "rules_effective_from": TA_OLD,
+        "status": "IN_POSITION" if pos else "WAITING_FOR_SIGNAL",
+        "recent_trades": [{"type": "SELL", "strategy": k, "market": "KRW-X",
+                           "exit_time": "2026-11-16 19:00:00", "exit_kind": "TIME",
+                           "gain_pct": -0.4, "pnl_krw": -8000}],
+    }
+
+m51 = E.migrate_from_v5(v50)
+check("v5.1 버전 기록", m51["version"] == "5.1", m51["version"])
+check("10계좌 전적 무손실",
+      [m51["strategies"][k]["total_trades"] for k in E.STRATEGY_KEYS]
+      == [row_src[k][0] for k in E.STRATEGY_KEYS],
+      str([m51["strategies"][k]["total_trades"] for k in E.STRATEGY_KEYS]))
+check("10계좌 잔고 무손실",
+      [m51["strategies"][k]["cash_krw"] for k in E.STRATEGY_KEYS]
+      == [float(row_src[k][4]) for k in E.STRATEGY_KEYS],
+      str([m51["strategies"][k]["cash_krw"] for k in E.STRATEGY_KEYS]))
+check("10계좌 실현손익 무손실",
+      [round(m51["strategies"][k]["total_realized_pnl"]) for k in E.STRATEGY_KEYS]
+      == [row_src[k][3] for k in E.STRATEGY_KEYS])
+check("승·패 무손실",
+      [m51["strategies"][k]["wins"] for k in E.STRATEGY_KEYS]
+      == [row_src[k][1] for k in E.STRATEGY_KEYS])
+check("보유 포지션 그대로 승계 (강제 정리 없음)",
+      (m51["strategies"]["3m"]["position"] or {}).get("market") == "KRW-NEAR"
+      and (m51["strategies"]["bb_squeeze"]["position"] or {}).get("market") == "KRW-PIEVERSE")
+check("매매내역 유지", m51["strategies"]["3m"]["recent_trades"][-1]["exit_kind"] == "TIME")
+check("v4_archive 보존",
+      ((m51.get("v4_archive") or {}).get("retired_totals") or {}).get("count") == 3)
+check("v4→v5 승계 이력 보존",
+      (m51.get("migrated_from") or {}).get("carried_trades") == 230)
+check("v5_fix 승계 기록",
+      (m51.get("v5_fix") or {}).get("from_version") == "5.0"
+      and m51["v5_fix"]["carried_trades"] == 416)
+check("v5_fix 승계 자산 = 10계좌 합",
+      m51["v5_fix"]["carried_equity"] == sum(row_src[k][4] for k in E.STRATEGY_KEYS),
+      str(m51["v5_fix"]["carried_equity"]))
+check("파라미터 교체 3m (12분 + 정체 청산)",
+      m51["strategies"]["3m"]["params"]["max_hold_min"] == 12
+      and m51["strategies"]["3m"]["params"]["stagnation_min"] == 6)
+check("파라미터 교체 panic_bounce (1.6 / -1.3)",
+      m51["strategies"]["panic_bounce"]["params"]["trail_activation_pct"] == 1.6
+      and m51["strategies"]["panic_bounce"]["params"]["stop_pct"] == -1.3)
+check("파라미터 교체 30m (0.75 / -0.50)",
+      m51["strategies"]["30m"]["params"]["target_pct"] == 0.75
+      and m51["strategies"]["30m"]["params"]["stop_pct"] == -0.50)
+check("규칙 바뀐 계좌는 예산 시계 리셋",
+      m51["strategies"]["3m"]["rules_effective_from"] != TA_OLD
+      and "3m" in m51["v5_fix"]["rules_changed_keys"])
+check("규칙 그대로인 tape_sweep 은 시계 유지",
+      m51["strategies"]["tape_sweep"]["rules_effective_from"] == TA_OLD
+      and "tape_sweep" not in m51["v5_fix"]["rules_changed_keys"],
+      m51["strategies"]["tape_sweep"]["rules_effective_from"])
+check("총 시드·최고점 보존", m51["initial_capital"] == 20_000_000 and m51["peak_equity"] == 20_000_000)
+
+# ensure_league_state 경로 (Gist 대신 로컬 v5.0 파일로 확인)
+E.gist_enabled = lambda: False
+E.last_load_source = lambda: "local"
+persistence._state_cache = None
+persistence.save_state(json.loads(json.dumps(v50)), remote=False)
+ens = E.ensure_league_state()
+check("ensure: v5.0 파일 → v5.1 승계", ens["version"] == "5.1", str(ens.get("version")))
+check("ensure: 전적 유지", ens["total_trades"] == 416, str(ens["total_trades"]))
+check("ensure: alt_rs 현금 유지", ens["strategies"]["alt_rs"]["cash_krw"] == 2_000_000)
+check("ensure: 3m 포지션 유지",
+      (ens["strategies"]["3m"].get("position") or {}).get("market") == "KRW-NEAR")
 
 print()
 print(f"총 {OK + FAIL}개 검사 · PASS {OK} · FAIL {FAIL}")
