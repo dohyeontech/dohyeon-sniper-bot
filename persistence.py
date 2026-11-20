@@ -3,13 +3,17 @@
 
 v4.0 엔진은 1.5초마다 상태를 갱신하므로
 - 읽기: 프로세스 메모리 캐시 사용 (Gist API 호출 없음, 시작 시 1회만 원격 조회)
-- 쓰기: 로컬 파일은 매번 원자적 저장, Gist는 체결/포지션 변경 시 즉시 + 그 외 60초 간격
+- 쓰기: 로컬 파일은 매번 원자적 저장, Gist는 체결/포지션 변경 시 즉시 + 그 외 300초 간격
+- 업로드 본문은 gzip+base64("GZB64:" 접두사)로 보낸다: 688KB → 72KB (Render 무료 대역폭 5GB/월 보호)
+  로드 시 "GZB64:" 접두사가 없으면 예전처럼 평문 JSON으로 읽는다(하위 호환).
 
 `last_load_source()`로 이 프로세스가 실제로 어디서 상태를 읽었는지 알 수 있다.
 Gist가 설정된 환경에서 원격 로드가 실패하고 로컬 파일로 폴백한 경우, 엔진은
 그 상태를 원격에 다시 쓰지 않는다 (낡은 파일로 라이브 전적을 덮어쓰는 사고 방지).
 """
 
+import base64
+import gzip
 import json
 import os
 import threading
@@ -21,7 +25,8 @@ KST = timezone(timedelta(hours=9))
 
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "state.json")
 
-GIST_SYNC_MIN_INTERVAL = 60.0   # 초 단위 최소 Gist 동기화 간격
+GIST_SYNC_MIN_INTERVAL = 300.0  # 초 단위 최소 Gist 동기화 간격
+GIST_COMPRESS_PREFIX = "GZB64:"  # gzip+base64 업로드 본문 접두사
 USER_AGENT = "SniperBot/4.0"
 
 _lock = threading.RLock()
@@ -73,7 +78,15 @@ def _fetch_gist(token, gist_id, timeout=8):
                  "User-Agent": USER_AGENT})
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         data = json.loads(resp.read().decode())
-    return json.loads(data["files"]["state.json"]["content"])
+    return _decode_gist_content(data["files"]["state.json"]["content"])
+
+
+def _decode_gist_content(content):
+    """GZB64: 접두사면 gzip+base64 본문을 풀고, 아니면 평문 JSON으로 읽는다."""
+    if content.startswith(GIST_COMPRESS_PREFIX):
+        raw = base64.b64decode(content[len(GIST_COMPRESS_PREFIX):].encode("ascii"))
+        return json.loads(gzip.decompress(raw).decode("utf-8"))
+    return json.loads(content)
 
 
 def _write_local(state):
@@ -127,8 +140,9 @@ def _sync_gist(state):
     if not (token and gist_id):
         return False
     try:
-        payload = json.dumps({"files": {"state.json": {
-            "content": json.dumps(state, indent=2, ensure_ascii=False)}}}).encode("utf-8")
+        body = json.dumps(state, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        packed = GIST_COMPRESS_PREFIX + base64.b64encode(gzip.compress(body, 6)).decode("ascii")
+        payload = json.dumps({"files": {"state.json": {"content": packed}}}).encode("utf-8")
         req = urllib.request.Request(
             f"https://api.github.com/gists/{gist_id}", data=payload, method="PATCH",
             headers={"Authorization": f"token {token}",
@@ -150,7 +164,7 @@ def _sync_gist(state):
 
 
 def save_state(state, remote=True, force_remote=False):
-    """로컬 저장은 항상, Gist 동기화는 force 또는 60초 간격."""
+    """로컬 저장은 항상, Gist 동기화는 force 또는 300초 간격."""
     global _state_cache, _pending
     with _lock:
         _state_cache = state

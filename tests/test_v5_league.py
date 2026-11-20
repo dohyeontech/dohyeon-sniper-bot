@@ -922,6 +922,69 @@ check("ensure: 3m 포지션 유지",
       (ens["strategies"]["3m"].get("position") or {}).get("market") == "KRW-NEAR")
 check("ensure: v5_2_fix 기록", (ens.get("v5_2_fix") or {}).get("from_version") == "5.1")
 
+# ------------------------------------------------------------- [16] Gist 압축
+print("[16] Gist 업로드 gzip 압축 (Render 대역폭 절감)")
+
+
+class _FakeResp:
+    def __init__(self, body=b"{}"):
+        self._body = body
+
+    def read(self):
+        return self._body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+captured = {"calls": 0}
+_real_urlopen = persistence.urllib.request.urlopen
+
+
+def _fake_urlopen(req, timeout=None):
+    captured["calls"] += 1
+    captured["url"] = req.full_url
+    captured["data"] = req.data
+    return _FakeResp()
+
+
+big = json.loads(json.dumps(ens))
+plain_payload = json.dumps({"files": {"state.json": {
+    "content": json.dumps(big, indent=2, ensure_ascii=False)}}}, ensure_ascii=False).encode("utf-8")
+persistence.urllib.request.urlopen = _fake_urlopen
+os.environ["GIST_TOKEN"] = "test-token"
+os.environ["GIST_ID"] = "test-gist"
+persistence._last_sync_ts = 0.0
+try:
+    sent_ok = persistence.save_state(big, force_remote=True)
+    first_calls = captured["calls"]
+    throttled_ok = persistence.save_state(big, remote=True)   # 300초 안 → 원격 저장 안 함
+except Exception as _e:  # noqa: BLE001
+    sent_ok, throttled_ok, first_calls = f"EXC {_e}", None, -1
+finally:
+    persistence.urllib.request.urlopen = _real_urlopen
+    os.environ.pop("GIST_TOKEN", None)
+    os.environ.pop("GIST_ID", None)
+    persistence._last_sync_ts = 0.0
+
+sent = json.loads(captured["data"].decode("utf-8"))["files"]["state.json"]["content"]
+check("gzip: 업로드 성공", sent_ok is True)
+check("gzip: GZB64 접두사", sent.startswith(persistence.GIST_COMPRESS_PREFIX))
+check("gzip: 왕복 복원 일치", persistence._decode_gist_content(sent) == big)
+check("gzip: 업로드 본문 20% 이하",
+      len(captured["data"]) < len(plain_payload) * 0.2,
+      f"{len(captured['data'])}B / 평문 {len(plain_payload)}B")
+check("gzip: 동기화 간격 300초", persistence.GIST_SYNC_MIN_INTERVAL == 300.0,
+      str(persistence.GIST_SYNC_MIN_INTERVAL))
+check("gzip: 300초 안 재전송 억제", throttled_ok is False and captured["calls"] == first_calls,
+      f"calls {captured['calls']}")
+check("gzip: 예전 평문 상태 하위 호환",
+      persistence._decode_gist_content(json.dumps(big, indent=2, ensure_ascii=False)) == big)
+
+
 print()
 print(f"총 {OK + FAIL}개 검사 · PASS {OK} · FAIL {FAIL}")
 if FAILED:
