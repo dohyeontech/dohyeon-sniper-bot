@@ -104,7 +104,7 @@ async def lifespan(app: FastAPI):
     print("[Bot Engine] Shutting down.")
 
 
-app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v5.2", lifespan=lifespan)
+app = FastAPI(title="도현의 테크브리프 · 10대 단타 전략 실시간 비교 리그 v5.3", lifespan=lifespan)
 
 
 def _trim_trades(strategy_state, keep=0):
@@ -183,6 +183,18 @@ def _merged_status():
                         if all_initial else None})
     data["league_all_time"] = alltime
     data["retired_summary"] = retired
+
+    # v5.3: v5.2 리그 아카이브 요약 (alt_rs 퇴출 — 잔고는 confirmed_surge가 승계)
+    arc52 = state.get("v5_2_archive") or {}
+    ret52 = arc52.get("retired_totals") or {}
+    data["v5_2_archive"] = {
+        "archived_at": arc52.get("archived_at"),
+        "league": arc52.get("league"),
+        "retired_totals": ret52,
+        "retired_keys": [r.get("key") for r in (arc52.get("strategies") or [])
+                         if r.get("decision") == "retired"],
+    }
+    data["v5_3_fix"] = state.get("v5_3_fix")
     return data
 
 
@@ -237,6 +249,12 @@ def api_v1_archive():
 @app.get("/api/v2-archive")
 def api_v2_archive():
     return _archive_response("v2_archive.json", "v2_archive")
+
+
+@app.get("/api/v5-2-archive")
+def api_v52_archive():
+    """v5.2 리그 아카이브 — 퇴출 alt_rs의 최종 성적표와 10계좌 진단 (v5.3 승계 시 생성)."""
+    return _archive_response("", "v5_2_archive")
 
 
 @app.get("/api/v4-archive")

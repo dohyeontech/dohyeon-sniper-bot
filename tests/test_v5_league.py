@@ -151,8 +151,8 @@ def check(label, cond, detail=""):
         print(f"  FAIL  {label} {detail}")
 
 
-def sig(key, s, state, top=(), btc_snap=None):
-    ctx = {"state": state, "top_markets": set(top), "btc": BULL, "bearish": False,
+def sig(key, s, state, top=(), btc_snap=None, bear=False):
+    ctx = {"state": state, "top_markets": set(top), "btc": BEAR if bear else BULL, "bearish": bear,
            "btc_snap": btc_snap}
     s = dict(s)
     if s.get("candles") is None:
@@ -161,9 +161,9 @@ def sig(key, s, state, top=(), btc_snap=None):
 
 
 # ------------------------------------------------------------- [1] 구조
-print("[1] 10전략 리그 구조 (v5.2)")
+print("[1] 10전략 리그 구조 (v5.3)")
 s = fresh()
-check("version 5.2", s["version"] == "5.2", s["version"])
+check("version 5.3", s["version"] == "5.3", s["version"])
 check("mode", s["mode"] == "ten_strategy_league", s["mode"])
 check("10 strategies", len(s["strategies"]) == 10, str(len(s["strategies"])))
 check("keys", list(s["strategies"].keys()) == list(E.STRATEGY_KEYS), str(list(s["strategies"])))
@@ -174,8 +174,17 @@ check("퇴출 3전략이 리스트에 없음",
       not set(E.RETIRED_KEYS) & set(E.STRATEGY_KEYS), str(E.RETIRED_KEYS))
 check("퇴출 진단 문구 존재",
       all(E.RETIRED_DIAGNOSIS.get(k) for k in E.RETIRED_KEYS))
-check("재설계 진단 문구 존재",
-      all(E.REBUILT_DIAGNOSIS.get(k) for k in E.REBUILT_KEYS))
+check("재설계 진단 문구 존재 (v5.3 계좌별 로그 진단)",
+      all(E.V53_DIAGNOSIS.get(k) for k in E.REBUILT_KEYS))
+check("v5.3 퇴출 진단 문구 존재", all(E.RETIRED_V53_DIAGNOSIS.get(k) for k in E.RETIRED_V53))
+check("alt_rs 는 v5.3 퇴출 · 리그에서 제외",
+      "alt_rs" not in E.STRATEGY_KEYS and "alt_rs" in E.RETIRED_V53
+      and "alt_rs" in E.RULES_V4["retired"])
+check("confirmed_surge 신규 계좌 존재", "confirmed_surge" in E.STRATEGY_KEYS)
+check("전 계좌 1일 거래 상한 · 1일 손실 한도 보유",
+      all(E.STRATEGIES[k]["params"].get("max_trades_per_day")
+          and E.STRATEGIES[k]["params"].get("max_daily_loss_pct") == 2.0
+          for k in E.STRATEGY_KEYS))
 check("3m v5.2 밸런스 (목표 1.5 / 손졍 -1.3 / 800만 / BID 78%)",
       s["strategies"]["3m"]["params"]["target_pct"] == 1.5
       and s["strategies"]["3m"]["params"]["stop_pct"] == -1.3
@@ -184,10 +193,16 @@ check("3m v5.2 밸런스 (목표 1.5 / 손졍 -1.3 / 800만 / BID 78%)",
 check("10m 밸런스 (목표 1.6 / 손졍 -1.35)",
       s["strategies"]["10m"]["params"]["target_pct"] == 1.6
       and s["strategies"]["10m"]["params"]["stop_pct"] == -1.35)
-check("panic_bounce 급락 기준 유지 (-2.5%)",
-      s["strategies"]["panic_bounce"]["params"]["min_drop_pct"] == -2.5)
+check("panic_bounce v5.3 급락 기준 -4.0% · 약세장 -5.0%",
+      s["strategies"]["panic_bounce"]["params"]["min_drop_pct"] == -4.0
+      and s["strategies"]["panic_bounce"]["params"]["bear_min_drop_pct"] == -5.0)
+check("급등 추격 상한 3분 +1.5% (3m · 10m · confirmed)",
+      all(s["strategies"][k]["params"]["max_chg_pct"] == 1.5
+          for k in ("3m", "10m", "confirmed_surge")))
+check("30m 추세 가드 (3분 흐름 ≥ 0)",
+      s["strategies"]["30m"]["params"]["trend_guard_chg_3m_pct"] == 0.0)
 check("role 라벨", [E.STRATEGIES[k]["role"] for k in E.STRATEGY_KEYS] ==
-      ["kept", "kept", "rebuilt", "kept", "rebuilt", "rebuilt", "rebuilt", "new", "new", "new"],
+      ["kept", "kept", "rebuilt", "rebuilt", "rebuilt", "rebuilt", "rebuilt", "box_breakout".startswith("x") or "new", "new", "rebuilt"],
       str([E.STRATEGIES[k]["role"] for k in E.STRATEGY_KEYS]))
 check("BTC 필터 예외는 panic_bounce 하나", E.BTC_FILTER_EXEMPT == ("panic_bounce",),
       str(E.BTC_FILTER_EXEMPT))
@@ -303,7 +318,7 @@ for key, (w, l, pnl, eq, pos) in seed_rows.items():
         ],
     }
 mig = E.migrate_from_v4(old)
-check("승계 version 5.2 (v4→v5 규칙)", mig["version"] == "5.2", mig["version"])
+check("승계 version 5.3 (v4→v5 규칙)", mig["version"] == "5.3", mig["version"])
 check("승계 잔고 보존 (7계좌)",
       [mig["strategies"][k]["current_equity"] for k in
        ("3m", "10m", "30m", "panic_bounce", "pullback_reentry", "vwap_breakout", "bb_squeeze")] ==
@@ -337,8 +352,9 @@ check("아카이브 진단 문구", "설계 결함" in (ret_rows[0]["diagnosis"]
 check("퇴출 합계", arc["retired_totals"]["count"] == 3
       and arc["retired_totals"]["final_equity"] == 1_556_940 + 1_708_655 + 1_878_556,
       str(arc["retired_totals"]))
-check("재설계 4건도 아카이브 기록",
-      len([r for r in arc["strategies"] if r["decision"] == "rebuilt"]) == 4)
+check("재설계 5건도 아카이브 기록",
+      len([r for r in arc["strategies"] if r["decision"] == "rebuilt"]) == 5,
+      str([r["key"] for r in arc["strategies"] if r["decision"] == "rebuilt"]))
 check("migrated_from 요약", mig["migrated_from"]["retired_keys"] == list(E.RETIRED_KEYS)
       and mig["migrated_from"]["new_keys"] == list(E.NEW_KEYS))
 check("아카이브는 라이브 자본에 미포함",
@@ -352,7 +368,9 @@ check("대형주 레인지 0.3% → 차단", not ok and "변동성" in why, why)
 ok, why = E._market_gates(snap(range_10m_pct=1.5), st["pullback_reentry"])
 check("알트 레인지 1.5% → 통과", ok, why)
 ok, why = E._market_gates(snap(price=128.0, range_10m_pct=1.5), st["pullback_reentry"])
-check("128원 종목(1틱 0.78%) → 비용 게이트 차단", not ok and "왕복비용" in why, why)
+check("128원 종목(왕복 0.88%) → 비용 게이트 차단", not ok and "실비용" in why, why)
+ok, why = E._market_gates(snap(price=2_000.0, range_10m_pct=1.5), st["pullback_reentry"])
+check("2,000원 종목(왕복 0.35%) → 비용 상한 0.25% 차단", not ok and "실비용" in why, why)
 ok, why = E._market_gates(snap(price=50_000.0, range_10m_pct=1.5), st["pullback_reentry"])
 check("5만 원 종목(1틱 0.02%) → 비용 통과", ok, why)
 ok, why = E._market_gates(snap(range_10m_pct=0.5), st["tape_sweep"])
@@ -380,8 +398,8 @@ st["pullback_reentry"]["recent_trades"] = [
 check("규칙 적용 이후 거래만 카운트", E._trades_today(st["pullback_reentry"]) == 3)
 check("재설계 계좌는 규칙 적용 시점 기록",
       mig["strategies"]["bb_squeeze"].get("rules_effective_from") is not None)
-check("규칙 유지 계좌는 1일 상한 없음 (예산 미적용)",
-      "max_trades_per_day" not in mig["strategies"]["10m"]["params"])
+check("10m 도 v5.3에서 1일 상한 10회 신설",
+      mig["strategies"]["10m"]["params"].get("max_trades_per_day") == 10)
 
 # ------------------------------------------------------------- [6] 신호
 print("[6] 10전략 신호 (양성 + 경계 음성)")
@@ -397,9 +415,12 @@ check("3m 500만은 문턱 미달", not ok and "15초 거래대금" in why, why)
 ok, why, _ = sig("10m", snap(market="KRW-A", short_krw=5_000_000, surge=5.0), s2)
 check("10m 문턱 미달", not ok and "15초 거래대금" in why, why)
 
+ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-4.5, bid=0.8,
+                                      price_15s_ago=50_000.0 * 0.99), s2)
+check("panic_bounce -4.5% 투매 반등", ok, why)
 ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-3.0, bid=0.8,
                                       price_15s_ago=50_000.0 * 0.99), s2)
-check("panic_bounce 급락 반등", ok, why)
+check("panic_bounce 얕은 -3.0%는 차단 (v5.3)", not ok and "급락 아님" in why, why)
 ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-1.0), s2)
 check("panic_bounce 급락 아님", not ok)
 
@@ -458,26 +479,29 @@ ok, why, _ = sig("box_breakout", snap(market="KRW-A", price=51_500.0, box_range_
                                       range_10m_pct=1.4, surge=3.5, chg_15s_pct=1.8), s2)
 check("박스 상단 급등 추격 차단", not ok and "추격" in why, why)
 
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.6, range_10m_pct=1.5, surge=3.0),
-                 s2, btc_snap=btc_flat)
-check("알트 상대강도 +1.5%p", ok, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.6, range_10m_pct=1.5, surge=3.0),
-                 s2, btc_snap=snap("KRW-BTC", chg=1.2))
-check("BTC도 같이 오르면 디커플링 아님", not ok, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-BTC", price=90_000_000.0, chg=2.0),
-                 s2, btc_snap=btc_flat)
-check("BTC 자신은 제외", not ok, why)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=20_000_000, surge=6.0,
+                                         bid=0.9, chg=1.0), s2)
+check("확인 급등 이중 확인 진입", ok, why)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=12_000_000, surge=6.0,
+                                         bid=0.9, chg=1.0), s2)
+check("확인 급등 1,200만은 문턱 미달", not ok and "15초 거래대금" in why, why)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=20_000_000, surge=6.0,
+                                         bid=0.80, chg=1.0), s2)
+check("확인 급등 BID 80% 차단", not ok and "매수비율" in why, why)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=20_000_000, surge=6.0,
+                                         bid=0.9, chg=1.9), s2)
+check("확인 급등 3분 +1.9%는 추격 금지", not ok and "뒷북" in why, why)
 
 ok, why, _ = sig("tape_sweep", snap(market="KRW-A", range_10m_pct=1.2,
-                                    max_bid_krw_10s=6_000_000.0, avg_tick_krw_3m=1_000_000.0,
+                                    max_bid_krw_10s=9_000_000.0, avg_tick_krw_3m=1_000_000.0,
                                     ticks_10s=12, chg_15s_pct=0.3), s2)
 check("대형 매수 체결 스파이크", ok, why)
 ok, why, _ = sig("tape_sweep", snap(market="KRW-A", range_10m_pct=1.2,
-                                    max_bid_krw_10s=6_000_000.0, avg_tick_krw_3m=3_000_000.0,
+                                    max_bid_krw_10s=9_000_000.0, avg_tick_krw_3m=3_000_000.0,
                                     ticks_10s=12, chg_15s_pct=0.3), s2)
 check("평균 대비 2배는 미달", not ok and "배수" in why, why)
 ok, why, _ = sig("tape_sweep", snap(market="KRW-A", range_10m_pct=1.2,
-                                    max_bid_krw_10s=6_000_000.0, avg_tick_krw_3m=1_000_000.0,
+                                    max_bid_krw_10s=9_000_000.0, avg_tick_krw_3m=1_000_000.0,
                                     ticks_10s=12, chg_15s_pct=0.0), s2)
 check("체결 후 상승 미확인 차단", not ok, why)
 
@@ -550,7 +574,7 @@ print("[9] BTC 필터 (9전략 차단 + 역추세 1전략 예외)")
 s5 = fresh(btc=BEAR)
 persistence._state_cache = s5
 fs3 = FakeStream()
-fs3.snaps["KRW-ALT"] = snap(market="KRW-ALT", chg=-3.0, bid=0.9, range_10m_pct=2.0)
+fs3.snaps["KRW-ALT"] = snap(market="KRW-ALT", chg=-5.5, bid=0.9, range_10m_pct=2.0)
 fs3.price["KRW-ALT"] = 50_000.0
 E.set_candle_cache(None)
 E._btc_cache["data"] = dict(BEAR)
@@ -560,9 +584,27 @@ blocked = [k for k in E.STRATEGY_KEYS
            if s5["strategies"][k]["status"] == "BTC_FILTER_BLOCKED"]
 check("9전략 차단", len(blocked) == 9, f"{len(blocked)}개: {blocked}")
 check("panic_bounce 예외", "panic_bounce" not in blocked)
-check("panic_bounce 실제 진입", s5["strategies"]["panic_bounce"]["position"] is not None,
+check("panic_bounce 실제 진입 (-5.5% 투매)", s5["strategies"]["panic_bounce"]["position"] is not None,
       str(s5["strategies"]["panic_bounce"]["position"] and
           s5["strategies"]["panic_bounce"]["position"]["market"]))
+
+# v5.3: BTC 약세장에서는 -5.0% · BID 75% 로 조건을 강화한다
+s5b = fresh(btc=BEAR)
+persistence._state_cache = s5b
+fs3b = FakeStream()
+fs3b.snaps["KRW-ALT"] = snap(market="KRW-ALT", chg=-4.2, bid=0.95, range_10m_pct=2.0)
+fs3b.price["KRW-ALT"] = 50_000.0
+E.run_sniper_tick(fs3b)
+check("약세장 -4.2%는 panic_bounce 도 차단 (v5.3 강화)",
+      s5b["strategies"]["panic_bounce"]["position"] is None,
+      str(s5b["strategies"]["panic_bounce"]["status"]))
+s5c = fresh(btc=BEAR)
+persistence._state_cache = s5c
+fs3c = FakeStream()
+fs3c.snaps["KRW-ALT"] = snap(market="KRW-ALT", chg=-5.5, bid=0.73, range_10m_pct=2.0)
+fs3c.price["KRW-ALT"] = 50_000.0
+E.run_sniper_tick(fs3c)
+check("약세장 BID 73%(<75% 요구)는 차단", s5c["strategies"]["panic_bounce"]["position"] is None)
 
 # ------------------------------------------------------------- [10] 집계
 print("[10] 리더보드 · 집계")
@@ -633,10 +675,10 @@ check("목표 +1.6% → 스프레드 반영 1.58%", abs(ten["recent_trades"][-1]
 check("승 기록", ten["wins"] == 1 and ten["losses"] == 0)
 check("현금 복원", 2_020_000 < ten["cash_krw"] < 2_040_000, f"{ten['cash_krw']:,.0f}원")
 
-# ------------------------------------------------------------- [14] v5.2 규칙
-print("[14] v5.2 규칙 — 정체 청산 철폐 · 목표 현실화 · 노이즈 차단")
+# ------------------------------------------------------------- [14] v5.3 규칙
+print("[14] v5.3 규칙 — 비용·추격 상한 · 1일 리스크 예산 · 전략 교체")
 
-# (1) 실측 스냅샷의 coverage_sec 은 구조상 180에 닿지 않는다 → 179.x초에서도 alt_rs 가 진입해야 한다
+# (1) 실측 스냅샷의 coverage_sec 은 구조상 180에 닿지 않는다 (엔진 판정 창의 물리적 한계)
 ws2 = UpbitTradeStream()
 now2 = int(time.time() * 1000)
 dq = deque()
@@ -648,13 +690,6 @@ for i in range(180):
 ws2._ticks["KRW-ALT"] = dq
 sp2 = ws2.market_snapshot("KRW-ALT", now_ms=now2)
 check("실측 스냅샷 coverage_sec < 180s", sp2["coverage_sec"] < 180.0, f"{sp2['coverage_sec']:.1f}s")
-ok, why, _ = sig("alt_rs", sp2, s2, btc_snap=snap("KRW-BTC", price=90_000_000.0, chg=0.1))
-check("alt_rs 179.x초 관측에서 진입 (0전 버그 회귀)", ok, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.6, range_10m_pct=1.5, surge=3.0,
-                                coverage_sec=149.0), s2, btc_snap=btc_flat)
-check("alt_rs 관측 149초는 여전히 대기", not ok and "3분 관측" in why, why)
-check("alt_rs min_coverage_sec = 150",
-      E.STRATEGIES["alt_rs"]["params"].get("min_coverage_sec") == 150)
 
 # (2) 6분 무풍 정체 청산(STAGNATION)은 로직·파라미터·규칙표 어디에도 없다
 check("STAGNATION 파라미터 전면 제거",
@@ -690,7 +725,7 @@ check("12분을 넘기면 시간초과 청산", hit and hit[2] == "TIME", str(hi
 hit = hold_case("tape_sweep", 0.10, 8.5)
 check("tape_sweep 8분 상한 → 시간초과", hit and hit[2] == "TIME", str(hit))
 hit = hold_case("panic_bounce", 0.10, 14.0)
-check("panic_bounce 14분 무풍 → 보유", hit is None, str(hit))
+check("panic_bounce 14분 → 시간초과 (상한 10분, v5.3)", hit and hit[2] == "TIME", str(hit))
 
 # (3) 모멘텀·돌파 6전략 밴드 현실화
 FAMILY = ("3m", "10m", "pullback_reentry", "vwap_breakout", "bb_squeeze", "box_breakout")
@@ -705,11 +740,11 @@ for k in FAMILY:
     check(f"{k} 트레일 발동 < 목표 (수익 확정 구조)",
           p["trail_activation_pct"] < p["target_pct"])
 
-# (4) 3m 문턱 상향 (허매수 차단)
+# (4) 3m 문턱 상향 + v5.3 추격 상한
 p3 = E.STRATEGIES["3m"]["params"]
 check("3m 15초 800만↑", p3["min_short_krw"] == 8_000_000)
 check("3m BID 78%↑", p3["min_bid_ratio"] == 0.78)
-check("3m 1일 상한 10회", p3["max_trades_per_day"] == 10)
+check("3m 1일 상한 8회 (v5.3)", p3["max_trades_per_day"] == 8)
 ok, why, _ = sig("3m", snap(market="KRW-A", short_krw=7_000_000, surge=5.0, bid=0.9,
                             chg=1.0), s2)
 check("3m 700만은 문턱 미달", not ok and "15초 거래대금" in why, why)
@@ -721,75 +756,144 @@ ok, why, _ = sig("3m", snap(market="KRW-A", short_krw=9_000_000, surge=5.0, bid=
 check("3m 900만·BID 85% 진입", ok, why)
 ok, why, _ = sig("3m", snap(market="KRW-A", price=128.0, short_krw=30_000_000, surge=5.0,
                             bid=0.9, chg=1.0), s2)
-check("3m 저가 종목(왕복 0.88%)은 비용 게이트 차단", not ok and "왕복비용" in why, why)
+check("3m 저가 종목(왕복 0.88%)은 비용 게이트 차단", not ok and "실비용" in why, why)
+ok, why, _ = sig("3m", snap(market="KRW-A", short_krw=30_000_000, surge=5.0, bid=0.9,
+                            chg=1.9), s2)
+check("3m 3분 +1.9%는 추격 상한(1.5%) 차단", not ok and "뒷북" in why, why)
+ok, why, _ = sig("3m", snap(market="KRW-A", short_krw=30_000_000, surge=5.0, bid=0.9,
+                            chg=1.4), s2)
+check("3m 3분 +1.4%는 진입", ok, why)
 
-# (5) alt_rs 엄선
-p9 = E.STRATEGIES["alt_rs"]["params"]
-check("alt_rs 디커플링 +1.3%p", p9["min_rs_pct"] == 1.3, str(p9["min_rs_pct"]))
-check("alt_rs 15초 700만↑", p9["min_short_krw"] == 7_000_000)
-check("alt_rs BID 75%↑", p9["min_bid_ratio"] == 0.75)
-check("alt_rs 1일 상한 6회", p9["max_trades_per_day"] == 6)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.6, range_10m_pct=1.5, surge=3.0),
-                 s2, btc_snap=btc_flat)
-check("alt_rs +1.5%p 진입", ok, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=1.3, range_10m_pct=1.5, surge=3.0),
-                 s2, btc_snap=btc_flat)
-check("alt_rs +1.2%p는 대기", not ok and "디커플링" in why, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=2.0, bid=0.70, range_10m_pct=1.5,
-                                surge=3.0), s2, btc_snap=btc_flat)
-check("alt_rs BID 70% 차단", not ok and "매수비율" in why, why)
-ok, why, _ = sig("alt_rs", snap(market="KRW-A", chg=2.0, short_krw=5_000_000,
-                                range_10m_pct=1.5, surge=3.0), s2, btc_snap=btc_flat)
-check("alt_rs 500만은 문턱 미달", not ok and "15초 거래대금" in why, why)
+# (5) confirmed_surge — v5.3 신규 (alt_rs 계좌 승계)
+pc = E.STRATEGIES["confirmed_surge"]["params"]
+check("confirmed_surge 15초 1,500만↑", pc["min_short_krw"] == 15_000_000)
+check("confirmed_surge 5.0배↑ · BID 85%↑",
+      pc["min_surge_ratio"] == 5.0 and pc["min_bid_ratio"] == 0.85)
+check("confirmed_surge 손익비 (목표 1.5 / 손절 -1.0)",
+      pc["target_pct"] == 1.5 and pc["stop_pct"] == -1.0
+      and pc["target_pct"] / abs(pc["stop_pct"]) >= 1.5)
+check("confirmed_surge 1일 상한 6회", pc["max_trades_per_day"] == 6)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=20_000_000, surge=6.0,
+                                         bid=0.9, chg=1.0), s2)
+check("confirmed_surge 진입", ok, why)
+ok, why, _ = sig("confirmed_surge", snap(market="KRW-A", short_krw=20_000_000, surge=4.0,
+                                         bid=0.9, chg=1.0), s2)
+check("confirmed_surge 폭발배수 4.0x는 미달", not ok and "폭발배수" in why, why)
 
-# (6) panic_bounce 밸런스 · 30m/tape_sweep 유지
+# (6) panic_bounce 재설계 (v5.3)
 pb = E.STRATEGIES["panic_bounce"]["params"]
-check("panic_bounce 목표 +1.8%", pb["target_pct"] == 1.8)
-check("panic_bounce 트레일 +1.2%→고점 -0.35%",
-      pb["trail_activation_pct"] == 1.2 and pb["trail_drop_pct"] == 0.35)
-check("panic_bounce 손절 -1.25%", pb["stop_pct"] == -1.25)
-check("panic_bounce 최대 15분 유지", pb["max_hold_min"] == 15)
+check("panic_bounce 목표 +1.6% · 트레일 +1.0%→-0.30%",
+      pb["target_pct"] == 1.6 and pb["trail_activation_pct"] == 1.0
+      and pb["trail_drop_pct"] == 0.30)
+check("panic_bounce 손절 -1.05% (실현 정합)", pb["stop_pct"] == -1.05)
+check("panic_bounce 최대 10분 · 동일종목 30분",
+      pb["max_hold_min"] == 10 and pb["symbol_cooldown_min"] == 30)
+check("panic_bounce 비용 게이트 신설 (cost_mult 5 · 0.25%)",
+      pb["cost_mult"] == 5 and pb["max_cost_pct"] == 0.25)
+ok, why, _ = sig("panic_bounce", snap(market="KRW-B", price=128.0, chg=-5.0, bid=0.9,
+                                      price_15s_ago=50_000.0 * 0.99), s2)
+check("panic_bounce 저가 종목(왕복 0.88%) 차단", not ok and "실비용" in why, why)
+ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-4.5, bid=0.8,
+                                      price_15s_ago=50_000.0 * 0.99), s2, bear=True)
+check("약세장 -4.5%는 기준 미달(-5.0%) 차단", not ok and "약세장" in why, why)
+ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-5.5, bid=0.74,
+                                      price_15s_ago=50_000.0 * 0.99), s2, bear=True)
+check("약세장 BID 74%(<75%) 차단", not ok and "매수비율" in why, why)
+ok, why, _ = sig("panic_bounce", snap(market="KRW-B", chg=-5.5, bid=0.80,
+                                      price_15s_ago=50_000.0 * 0.99), s2, bear=True)
+check("약세장 -5.5% · BID 80% 진입", ok, why)
+
+# (7) 30m 추세 가드 (v5.3)
 p30 = E.STRATEGIES["30m"]["params"]
-check("30m 규칙 유지 (0.75 / 0.50→0.20 / -0.50 / 12분)",
+check("30m 밴드 유지 (0.75 / 0.50→0.20 / -0.50 / 12분)",
       p30["target_pct"] == 0.75 and p30["trail_activation_pct"] == 0.50
       and p30["trail_drop_pct"] == 0.20 and p30["stop_pct"] == -0.50
       and p30["max_hold_min"] == 12)
+check("30m 1일 상한 14→8회", p30["max_trades_per_day"] == 8)
+ok, why, _ = sig("30m", snap(market="KRW-BTC", price=90_000_000.0, chg=-0.20,
+                             drawdown_from_high_pct=-0.6, range_10m_pct=0.3), s2,
+                 top=("KRW-BTC", "KRW-ETH"))
+check("30m 3분 하락 중 눌림은 차단 (v5.3)", not ok and "하락 중 눌림" in why, why)
+ok, why, _ = sig("30m", snap(market="KRW-BTC", price=90_000_000.0, chg=0.10,
+                             drawdown_from_high_pct=-0.6, range_10m_pct=0.3), s2,
+                 top=("KRW-BTC", "KRW-ETH"))
+check("30m 3분 흐름 ≥ 0이면 진입", ok, why)
+
+# (8) tape_sweep 재설계 (v5.3)
 pt = E.STRATEGIES["tape_sweep"]["params"]
-check("tape_sweep 규칙 유지 (1.8 / -1.0 / 8분)",
-      pt["target_pct"] == 1.8 and pt["stop_pct"] == -1.0 and pt["max_hold_min"] == 8)
+check("tape_sweep 800만↑ · 6배↑", pt["min_print_krw"] == 8_000_000
+      and pt["min_print_mult"] == 6.0)
+check("tape_sweep 목표 +1.2% / 손절 -0.8% / 6분",
+      pt["target_pct"] == 1.2 and pt["stop_pct"] == -0.8 and pt["max_hold_min"] == 6)
+check("tape_sweep 1일 상한 14→6회", pt["max_trades_per_day"] == 6)
 
-# ------------------------------------------------------------- [15] v5.1 → v5.2
-print("[15] v5.1 → v5.2 무손실 승계")
+# (9) 1일 손실 한도 (v5.3 신설) — 틱 루프에서 실제로 멈추는지
+s9 = fresh()
+persistence._state_cache = s9
+fs7 = FakeStream()
+stx = s9["strategies"]["3m"]
+stx["day_start_date"] = E.fmt(E.kst_now())[:10]
+stx["day_start_equity"] = 2_000_000.0
+stx["cash_krw"] = 1_950_000.0            # -2.5%
+E._btc_cache["data"] = dict(BULL)
+E._btc_cache["ts"] = time.time()
+E.run_sniper_tick(fs7)
+check("1일 손실 -2.5% → DAILY_LOSS_STOP", stx["status"] == "DAILY_LOSS_STOP", stx["status"])
+check("1일 손실 중단 사유 문구", "1일 손실 한도" in (stx.get("last_event") or ""),
+      stx.get("last_event"))
+check("1일 손실 한도 -2.0% 파라미터", stx["params"]["max_daily_loss_pct"] == 2.0)
 
-TA_OLD = "2026-11-16 20:20:47"
-V51 = {
-    "3m": {"min_short_krw": 3_000_000, "min_bid_ratio": 0.70, "target_pct": 2.5,
-           "trail_activation_pct": 1.5, "trail_drop_pct": 0.4, "stop_pct": -1.8,
-           "stagnation_min": 6, "stagnation_band_pct": 0.25,
-           "cost_mult": None, "max_trades_per_day": None},
-    "10m": {"target_pct": 2.5, "trail_activation_pct": 1.5, "trail_drop_pct": 0.4,
-            "stop_pct": -1.8, "stagnation_min": 6, "stagnation_band_pct": 0.25,
-            "cost_mult": None},
-    "pullback_reentry": {"target_pct": 2.4, "trail_activation_pct": 1.5, "trail_drop_pct": 0.45,
-                         "stop_pct": -1.3, "stagnation_min": 6, "stagnation_band_pct": 0.25},
-    "vwap_breakout": {"target_pct": 2.0, "trail_activation_pct": 1.1, "trail_drop_pct": 0.35,
-                      "stop_pct": -1.2, "stagnation_min": 6, "stagnation_band_pct": 0.25},
-    "bb_squeeze": {"target_pct": 2.2, "trail_activation_pct": 1.2, "trail_drop_pct": 0.35,
-                   "stop_pct": -1.3, "stagnation_min": 6, "stagnation_band_pct": 0.25},
-    "box_breakout": {"target_pct": 2.2, "trail_activation_pct": 1.4, "trail_drop_pct": 0.4,
-                     "stop_pct": -1.2, "stagnation_min": 6, "stagnation_band_pct": 0.25},
-    "alt_rs": {"min_rs_pct": 0.8, "min_short_krw": 3_000_000, "min_bid_ratio": 0.62,
-               "target_pct": 2.2, "trail_activation_pct": 1.3, "trail_drop_pct": 0.4,
-               "stagnation_min": 6, "stagnation_band_pct": 0.25, "max_trades_per_day": 10},
-    "panic_bounce": {"target_pct": 2.0, "trail_activation_pct": 1.6, "trail_drop_pct": 0.40,
-                     "stop_pct": -1.3},
+s9b = fresh()
+persistence._state_cache = s9b
+fs7b = FakeStream()
+stx2 = s9b["strategies"]["3m"]
+stx2["day_start_date"] = E.fmt(E.kst_now())[:10]
+stx2["day_start_equity"] = 2_000_000.0
+stx2["cash_krw"] = 1_980_000.0            # -1.0%
+E.run_sniper_tick(fs7b)
+check("1일 손실 -1.0%는 계속 가동", stx2["status"] != "DAILY_LOSS_STOP", stx2["status"])
+
+# ------------------------------------------------------------- [15] v5.2 → v5.3
+print("[15] v5.2 → v5.3 무손실 승계 (alt_rs 퇴출 · confirmed_surge 승계)")
+
+TA_OLD = "2026-11-17 06:49:52"
+# v5.2 라이브 파라미터와 v5.3의 차이 (v5.3 코드 정의에서 v5.2 값을 되돌린다)
+V52 = {
+    "3m": {"max_chg_pct": 3.0, "max_trades_per_day": 10, "max_cost_pct": None,
+           "max_daily_loss_pct": None},
+    "10m": {"max_chg_pct": 3.0, "max_trades_per_day": None, "max_cost_pct": None,
+            "max_daily_loss_pct": None},
+    "30m": {"max_trades_per_day": 14, "trend_guard_chg_3m_pct": None,
+            "max_daily_loss_pct": None},
+    "panic_bounce": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 1.8,
+                     "trail_activation_pct": 1.2, "trail_drop_pct": 0.35, "stop_pct": -1.25,
+                     "max_hold_min": 15, "symbol_cooldown_min": 15, "symbol_cooldown_scope": "stop",
+                     "bear_min_drop_pct": None, "bear_min_bid_ratio": None,
+                     "cost_mult": None, "max_cost_pct": None, "max_trades_per_day": None,
+                     "max_daily_loss_pct": None},
+    "pullback_reentry": {"max_chg_3m_pct": None, "max_trades_per_day": 12,
+                         "max_cost_pct": None, "max_daily_loss_pct": None},
+    "vwap_breakout": {"max_chg_3m_pct": None, "max_trades_per_day": 12,
+                      "max_cost_pct": None, "max_daily_loss_pct": None},
+    "bb_squeeze": {"max_chg_3m_pct": None, "max_trades_per_day": 12,
+                   "max_cost_pct": None, "max_daily_loss_pct": None},
+    "box_breakout": {"max_chg_3m_pct": None, "max_trades_per_day": 10,
+                     "max_cost_pct": None, "max_daily_loss_pct": None},
+    "tape_sweep": {"min_print_krw": 3_000_000, "min_print_mult": 4.0, "min_bid_10s": 0.60,
+                   "min_chg_15s_pct": 0.12, "target_pct": 1.8, "trail_activation_pct": 1.1,
+                   "trail_drop_pct": 0.30, "stop_pct": -1.0, "max_hold_min": 8,
+                   "max_trades_per_day": 14, "max_cost_pct": None, "max_daily_loss_pct": None},
+    "alt_rs": {"min_rs_pct": 1.3, "min_short_krw": 7_000_000, "min_bid_ratio": 0.75,
+               "target_pct": 1.6, "max_trades_per_day": 6},
 }
 
 
-def _v51_params(k):
-    """v5.1 라이브 파라미터 (v5.2 코드 정의에서 바뀐 값만 되돌린다)."""
+def _v52_params(k):
+    """v5.2 라이브 파라미터 (v5.3 코드 정의에서 v5.2 값을 되돌린다)."""
+    if k not in E.STRATEGIES:            # alt_rs 는 v5.3에서 퇴출 — v5.2 정의를 그대로 쓴다
+        return dict(V52.get(k, {}))
     p = dict(E.STRATEGIES[k]["params"])
-    for key, val in V51.get(k, {}).items():
+    for key, val in V52.get(k, {}).items():
         if val is None:
             p.pop(key, None)
         else:
@@ -798,29 +902,30 @@ def _v51_params(k):
 
 
 row_src = {
-    "3m": (82, 26, 56, -628_073, 1_371_927,
+    "3m": (168, 53, 115, -990_393, 1_009_607,
            {"market": "KRW-NEAR", "name": "니어", "entry_price": 2_400.0, "coin_qty": 570.0,
-            "cost_krw": 1_368_000, "highest_price": 2_400.0, "entry_time": "2026-11-16 20:00:00",
+            "cost_krw": 1_368_000, "highest_price": 2_400.0, "entry_time": "2026-11-20 20:00:00",
             "entry_ts_ms": 1, "last_price": 2_400.0}),
-    "10m": (65, 24, 41, -360_424, 1_639_576,
+    "10m": (275, 111, 164, -1_021_174, 978_826,
             {"market": "KRW-NEAR", "name": "니어", "entry_price": 2_400.0, "coin_qty": 680.0,
-             "cost_krw": 1_632_000, "highest_price": 2_400.0, "entry_time": "2026-11-16 20:05:00",
+             "cost_krw": 1_632_000, "highest_price": 2_400.0, "entry_time": "2026-11-20 20:05:00",
              "entry_ts_ms": 2, "last_price": 2_400.0}),
-    "30m": (38, 11, 27, -212_494, 1_787_506, None),
-    "panic_bounce": (59, 30, 29, -443_174, 1_556_826, None),
-    "pullback_reentry": (55, 20, 35, -374_242, 1_625_758, None),
-    "vwap_breakout": (46, 14, 32, -338_803, 1_661_197, None),
-    "bb_squeeze": (38, 14, 24, -119_012, 1_880_988,
+    "30m": (85, 22, 63, -397_271, 1_602_729, None),
+    "panic_bounce": (240, 114, 126, -1_307_712, 692_288, None),
+    "pullback_reentry": (120, 52, 68, -580_310, 1_419_690, None),
+    "vwap_breakout": (115, 44, 71, -609_321, 1_390_679, None),
+    "bb_squeeze": (97, 30, 67, -479_388, 1_520_612,
                    {"market": "KRW-PIEVERSE", "name": "피버스", "entry_price": 100.0,
                     "coin_qty": 18_800.0, "cost_krw": 1_880_000, "highest_price": 100.0,
-                    "entry_time": "2026-11-16 20:10:00", "entry_ts_ms": 3, "last_price": 100.0}),
-    "box_breakout": (13, 3, 10, -89_240, 1_910_760, None),
-    "alt_rs": (0, 0, 0, 0, 2_000_000, None),
-    "tape_sweep": (20, 6, 14, -94_339, 1_905_661, None),
+                    "entry_time": "2026-11-20 20:10:00", "entry_ts_ms": 3, "last_price": 100.0}),
+    "box_breakout": (68, 21, 47, -296_021, 1_703_979, None),
+    "alt_rs": (40, 12, 28, -426_509, 1_573_491, None),
+    "tape_sweep": (76, 23, 53, -537_672, 1_462_328, None),
 }
-v51 = {"version": "5.1", "mode": "ten_strategy_league", "initialized_at": "2026-11-15 22:08:48",
-       "initial_capital": 20_000_000, "current_equity": 15_956_806, "current_ret_pct": -20.22,
-       "peak_equity": 20_000_000, "max_drawdown_pct": 20.22,
+old_keys = list(row_src.keys())
+v52 = {"version": "5.2", "mode": "ten_strategy_league", "initialized_at": "2026-11-15 22:08:48",
+       "initial_capital": 20_000_000, "current_equity": 13_354_229, "current_ret_pct": -33.23,
+       "peak_equity": 20_000_000, "max_drawdown_pct": 33.48,
        "total_trades": sum(r[0] for r in row_src.values()),
        "wins": sum(r[1] for r in row_src.values()), "losses": sum(r[2] for r in row_src.values()),
        "total_realized_pnl": round(sum(r[3] for r in row_src.values()), 2),
@@ -830,97 +935,198 @@ v51 = {"version": "5.1", "mode": "ten_strategy_league", "initialized_at": "2026-
        "migrated_from": {"version": "4.0", "at": "2026-11-15 22:08:48", "carried_trades": 230},
        "v5_fix": {"from_version": "5.0", "to_version": "5.1", "at": TA_OLD,
                   "carried_trades": 418, "rules_changed_keys": ["3m", "10m", "30m"]},
+       "v5_2_fix": {"from_version": "5.1", "to_version": "5.2", "at": TA_OLD,
+                    "carried_trades": 614, "rules_changed_keys": ["3m", "10m"]},
+       "strategy_order": old_keys,
        "strategies": {}}
 for k, (tr, w, l, pnl, cash, pos) in row_src.items():
-    v51["strategies"][k] = {
-        "key": k, "label": s["strategies"][k]["label"], "name": s["strategies"][k]["name"],
-        "kind": E.STRATEGIES[k]["kind"], "initial_capital": 2_000_000.0, "cash_krw": float(cash),
+    v52["strategies"][k] = {
+        "key": k, "label": E.STRATEGIES.get(k, {}).get("label", k),
+        "name": E.STRATEGIES.get(k, {}).get("name", k),
+        "kind": E.STRATEGIES.get(k, {}).get("kind", "surge"),
+        "initial_capital": 2_000_000.0, "cash_krw": float(cash),
         "position": dict(pos) if pos else None, "cooldown_until": None, "symbol_cooldowns": {},
         "total_realized_pnl": float(pnl), "total_trades": tr, "wins": w, "losses": l,
         "current_equity": float(cash), "peak_equity": 2_000_000.0, "max_drawdown_pct": 10.0,
-        "params": _v51_params(k), "entry": "old entry", "exit": "old exit",
+        "params": _v52_params(k), "entry": "old entry", "exit": "old exit",
         "rules_effective_from": TA_OLD,
         "status": "IN_POSITION" if pos else "WAITING_FOR_SIGNAL",
         "recent_trades": [{"type": "SELL", "strategy": k, "market": "KRW-X",
-                           "exit_time": "2026-11-16 19:00:00", "exit_kind": "STAGNATION",
+                           "exit_time": "2026-11-20 19:00:00", "exit_kind": "TIME",
                            "gain_pct": -0.4, "pnl_krw": -8000}],
     }
 
-m52 = E.migrate_from_v5(v51)
-check("v5.2 버전 기록", m52["version"] == "5.2", m52["version"])
-check("10계좌 전적 무손실",
-      [m52["strategies"][k]["total_trades"] for k in E.STRATEGY_KEYS]
-      == [row_src[k][0] for k in E.STRATEGY_KEYS],
-      str([m52["strategies"][k]["total_trades"] for k in E.STRATEGY_KEYS]))
-check("10계좌 잔고 무손실",
-      [m52["strategies"][k]["cash_krw"] for k in E.STRATEGY_KEYS]
-      == [float(row_src[k][4]) for k in E.STRATEGY_KEYS],
-      str([m52["strategies"][k]["cash_krw"] for k in E.STRATEGY_KEYS]))
-check("10계좌 실현손익 무손실",
-      [round(m52["strategies"][k]["total_realized_pnl"]) for k in E.STRATEGY_KEYS]
-      == [row_src[k][3] for k in E.STRATEGY_KEYS])
+m53 = E.migrate_from_v5(v52)
+kept_keys = [k for k in E.STRATEGY_KEYS if k != "confirmed_surge"]
+expect_trades = {"confirmed_surge": row_src["alt_rs"][0]}
+check("v5.3 버전 기록", m53["version"] == "5.3", m53["version"])
+check("리그에 alt_rs 없음 · confirmed_surge 있음",
+      "alt_rs" not in m53["strategies"] and "confirmed_surge" in m53["strategies"]
+      and m53["strategy_order"] == list(E.STRATEGY_KEYS))
+check("9계좌 전적 무손실",
+      [m53["strategies"][k]["total_trades"] for k in kept_keys]
+      == [row_src[k][0] for k in kept_keys],
+      str([m53["strategies"][k]["total_trades"] for k in kept_keys]))
+check("9계좌 잔고 무손실",
+      [m53["strategies"][k]["cash_krw"] for k in kept_keys]
+      == [float(row_src[k][4]) for k in kept_keys])
+check("9계좌 실현손익 무손실",
+      [round(m53["strategies"][k]["total_realized_pnl"]) for k in kept_keys]
+      == [row_src[k][3] for k in kept_keys])
 check("승·패 무손실",
-      [m52["strategies"][k]["wins"] for k in E.STRATEGY_KEYS]
-      == [row_src[k][1] for k in E.STRATEGY_KEYS])
+      [m53["strategies"][k]["wins"] for k in kept_keys]
+      == [row_src[k][1] for k in kept_keys])
+check("confirmed_surge 가 alt_rs 잔고·전적을 승계",
+      m53["strategies"]["confirmed_surge"]["cash_krw"] == float(row_src["alt_rs"][4])
+      and m53["strategies"]["confirmed_surge"]["total_trades"] == expect_trades["confirmed_surge"]
+      and m53["strategies"]["confirmed_surge"]["initial_capital"] == 2_000_000.0)
+check("승계 후 총 시드 그대로 (20,000,000)",
+      sum(float(m53["strategies"][k]["initial_capital"]) for k in E.STRATEGY_KEYS) == 20_000_000)
+check("승계 후 통합 자산 = v5.2 종료 자산",
+      round(sum(float(m53["strategies"][k]["cash_krw"]) for k in E.STRATEGY_KEYS)) == 13_354_229,
+      str(round(sum(float(m53["strategies"][k]["cash_krw"]) for k in E.STRATEGY_KEYS))))
 check("보유 포지션 그대로 승계 (강제 정리 없음)",
-      (m52["strategies"]["3m"]["position"] or {}).get("market") == "KRW-NEAR"
-      and (m52["strategies"]["bb_squeeze"]["position"] or {}).get("market") == "KRW-PIEVERSE")
-check("매매내역 유지", m52["strategies"]["3m"]["recent_trades"][-1]["exit_kind"] == "STAGNATION")
-check("v4_archive 보존",
-      ((m52.get("v4_archive") or {}).get("retired_totals") or {}).get("count") == 3)
-check("v4→v5 승계 이력 보존",
-      (m52.get("migrated_from") or {}).get("carried_trades") == 230)
-check("v5_fix(v5.0→v5.1) 이력 보존",
-      (m52.get("v5_fix") or {}).get("from_version") == "5.0"
-      and m52["v5_fix"]["carried_trades"] == 418)
-check("v5_2_fix 승계 기록",
-      (m52.get("v5_2_fix") or {}).get("from_version") == "5.1"
-      and m52["v5_2_fix"]["carried_trades"] == sum(row_src[k][0] for k in E.STRATEGY_KEYS))
-check("v5_2_fix 승계 자산 = 10계좌 합",
-      m52["v5_2_fix"]["carried_equity"] == sum(row_src[k][4] for k in E.STRATEGY_KEYS),
-      str(m52["v5_2_fix"]["carried_equity"]))
-check("v5_2_fix 보유 포지션 기록",
-      sorted(m52["v5_2_fix"]["carried_positions"]) == ["10m", "3m", "bb_squeeze"],
-      str(m52["v5_2_fix"]["carried_positions"]))
-check("파라미터 교체 3m (1.5 / -1.3 / 800만 / BID 78% / 정체 청산 없음)",
-      m52["strategies"]["3m"]["params"]["target_pct"] == 1.5
-      and m52["strategies"]["3m"]["params"]["stop_pct"] == -1.3
-      and m52["strategies"]["3m"]["params"]["min_short_krw"] == 8_000_000
-      and m52["strategies"]["3m"]["params"]["min_bid_ratio"] == 0.78
-      and "stagnation_min" not in m52["strategies"]["3m"]["params"])
-check("파라미터 교체 alt_rs (1.3%p / 700만 / BID 75% / 1일 6회)",
-      m52["strategies"]["alt_rs"]["params"]["min_rs_pct"] == 1.3
-      and m52["strategies"]["alt_rs"]["params"]["min_short_krw"] == 7_000_000
-      and m52["strategies"]["alt_rs"]["params"]["min_bid_ratio"] == 0.75
-      and m52["strategies"]["alt_rs"]["params"]["max_trades_per_day"] == 6)
-check("파라미터 교체 panic_bounce (1.8 / 1.2→0.35 / -1.25)",
-      m52["strategies"]["panic_bounce"]["params"]["target_pct"] == 1.8
-      and m52["strategies"]["panic_bounce"]["params"]["trail_activation_pct"] == 1.2
-      and m52["strategies"]["panic_bounce"]["params"]["stop_pct"] == -1.25)
-check("규칙 바뀐 계좌는 예산 시계 리셋",
-      m52["strategies"]["3m"]["rules_effective_from"] != TA_OLD
-      and "3m" in m52["v5_2_fix"]["rules_changed_keys"])
-check("규칙 그대로인 30m·tape_sweep 은 시계 유지",
-      m52["strategies"]["30m"]["rules_effective_from"] == TA_OLD
-      and m52["strategies"]["tape_sweep"]["rules_effective_from"] == TA_OLD
-      and "30m" not in m52["v5_2_fix"]["rules_changed_keys"]
-      and "tape_sweep" not in m52["v5_2_fix"]["rules_changed_keys"],
-      str(m52["v5_2_fix"]["rules_changed_keys"]))
-check("총 시드·최고점 보존", m52["initial_capital"] == 20_000_000 and m52["peak_equity"] == 20_000_000)
+      (m53["strategies"]["3m"]["position"] or {}).get("market") == "KRW-NEAR"
+      and (m53["strategies"]["bb_squeeze"]["position"] or {}).get("market") == "KRW-PIEVERSE"
+      and not (m53["strategies"]["3m"]["position"] or {}).get("force_exit_reason"))
+check("매매내역 유지", m53["strategies"]["3m"]["recent_trades"][-1]["exit_kind"] == "TIME")
 
-# ensure_league_state 경로 (Gist 대신 로컬 v5.1 파일로 확인)
+arc5 = m53.get("v5_2_archive") or {}
+ret5 = [r for r in (arc5.get("strategies") or []) if r["decision"] == "retired"]
+check("v5_2_archive 생성 (10계좌 성적표)", len(arc5.get("strategies") or []) == 10,
+      str(len(arc5.get("strategies") or [])))
+check("alt_rs 퇴출 아카이브 (-21.33%)",
+      len(ret5) == 1 and ret5[0]["key"] == "alt_rs" and ret5[0]["ret_pct"] == -21.33,
+      str([(r["key"], r["ret_pct"]) for r in ret5]))
+check("v5.2 아카이브 리그 성적 보존",
+      (arc5.get("league") or {}).get("final_equity") == 13_354_229
+      and (arc5.get("league") or {}).get("ret_pct") == -33.23)
+check("v4_archive 보존",
+      ((m53.get("v4_archive") or {}).get("retired_totals") or {}).get("count") == 3)
+check("v4→v5 승계 이력 보존",
+      (m53.get("migrated_from") or {}).get("carried_trades") == 230)
+check("v5_fix(v5.0→v5.1) · v5_2_fix(v5.1→v5.2) 이력 보존",
+      (m53.get("v5_fix") or {}).get("carried_trades") == 418
+      and (m53.get("v5_2_fix") or {}).get("carried_trades") == 614)
+check("v5_3_fix 승계 기록",
+      (m53.get("v5_3_fix") or {}).get("from_version") == "5.2"
+      and m53["v5_3_fix"]["retired_keys"] == ["alt_rs"]
+      and m53["v5_3_fix"]["inherited_keys"] == ["confirmed_surge"])
+check("v5_3_fix 승계 자산 = 13,354,229",
+      m53["v5_3_fix"]["carried_equity"] == 13_354_229, str(m53["v5_3_fix"]["carried_equity"]))
+check("파라미터 교체 (3m 추격 상한 1.5 · 상한 8회)",
+      m53["strategies"]["3m"]["params"]["max_chg_pct"] == 1.5
+      and m53["strategies"]["3m"]["params"]["max_trades_per_day"] == 8)
+check("파라미터 교체 (panic -4.0% · 손절 -1.05% · 비용 게이트)",
+      m53["strategies"]["panic_bounce"]["params"]["min_drop_pct"] == -4.0
+      and m53["strategies"]["panic_bounce"]["params"]["stop_pct"] == -1.05
+      and m53["strategies"]["panic_bounce"]["params"]["max_cost_pct"] == 0.25)
+check("파라미터 교체 (30m 추세 가드 · 상한 8회)",
+      m53["strategies"]["30m"]["params"]["trend_guard_chg_3m_pct"] == 0.0
+      and m53["strategies"]["30m"]["params"]["max_trades_per_day"] == 8)
+check("규칙 바뀐 계좌는 예산 시계 리셋",
+      m53["strategies"]["3m"]["rules_effective_from"] != TA_OLD
+      and set(m53["v5_3_fix"]["rules_changed_keys"]) == set(kept_keys),
+      str(m53["v5_3_fix"]["rules_changed_keys"]))
+check("1일 손실 예산 기준 자산 기록 (보유 포지션 포함 평가)",
+      m53["strategies"]["3m"]["day_start_equity"] == float(row_src["3m"][4]) + 570.0 * 2_400.0
+      and m53["strategies"]["confirmed_surge"]["day_start_equity"] == float(row_src["alt_rs"][4]),
+      str(m53["strategies"]["3m"]["day_start_equity"]))
+check("총 시드·최고점 보존", m53["initial_capital"] == 20_000_000
+      and m53["peak_equity"] == 20_000_000)
+
+# ensure_league_state 경로 (Gist 대신 로컬 v5.2 파일로 확인)
 E.gist_enabled = lambda: False
 E.last_load_source = lambda: "local"
 persistence._state_cache = None
-persistence.save_state(json.loads(json.dumps(v51)), remote=False)
+persistence.save_state(json.loads(json.dumps(v52)), remote=False)
 ens = E.ensure_league_state()
-check("ensure: v5.1 파일 → v5.2 승계", ens["version"] == "5.2", str(ens.get("version")))
-check("ensure: 전적 유지", ens["total_trades"] == sum(row_src[k][0] for k in E.STRATEGY_KEYS),
+check("ensure: v5.2 파일 → v5.3 승계", ens["version"] == "5.3", str(ens.get("version")))
+check("ensure: 전적 유지", ens["total_trades"] == sum(row_src[k][0] for k in old_keys),
       str(ens["total_trades"]))
-check("ensure: alt_rs 현금 유지", ens["strategies"]["alt_rs"]["cash_krw"] == 2_000_000)
+check("ensure: 계좌 현금 합 유지",
+      round(sum(float(ens["strategies"][k]["cash_krw"]) for k in E.STRATEGY_KEYS)) == 13_354_229,
+      str(round(sum(float(ens["strategies"][k]["cash_krw"]) for k in E.STRATEGY_KEYS))))
 check("ensure: 3m 포지션 유지",
       (ens["strategies"]["3m"].get("position") or {}).get("market") == "KRW-NEAR")
-check("ensure: v5_2_fix 기록", (ens.get("v5_2_fix") or {}).get("from_version") == "5.1")
+check("ensure: v5_3_fix 기록", (ens.get("v5_3_fix") or {}).get("from_version") == "5.2")
+check("ensure: v5_2_archive 보존", (ens.get("v5_2_archive") or {}).get("archived_at") is not None)
+
+# ------------------------------------------------------------- [15b] v5.3 리플레이
+print("[15b] v5.2 실거래 200청산 리플레이 — v5.3 게이트 효과")
+
+here = os.path.dirname(os.path.abspath(__file__))
+fixture_path = os.path.join(here, "fixtures", "v52_exits.json")
+EXITS = json.load(open(fixture_path, encoding="utf-8"))["exits"]
+check("리플레이 표본 200청산", len(EXITS) == 200, str(len(EXITS)))
+check("표본에 10계좌 포함", set(e["strategy"] for e in EXITS) == set(old_keys),
+      str(sorted(set(e["strategy"] for e in EXITS))))
+
+
+def _blocked(e, p):
+    """v5.3 게이트 (기록된 진입 피처 기준). 엔진 _market_gates 와 같은 규칙."""
+    cost = e.get("cost") or 0.0
+    if p.get("max_cost_pct") and cost > p["max_cost_pct"]:
+        return "cost_abs"
+    tgt = float(p.get("target_pct") or 0.0)
+    if p.get("cost_mult") and tgt and cost * p["cost_mult"] > tgt:
+        return "cost_mult"
+    chg = e.get("chg3")
+    cap = p.get("max_chg_pct") if p.get("max_chg_pct") is not None else p.get("max_chg_3m_pct")
+    if cap is not None and chg is not None and chg > cap:
+        return "chase"
+    tg = p.get("trend_guard_chg_3m_pct")
+    if tg is not None and (chg is None or chg < tg):
+        return "trend"
+    if p.get("min_surge_ratio") and (e.get("surge") or 0) < p["min_surge_ratio"]:
+        return "surge"
+    if p.get("min_bid_ratio") and (e.get("bid") or 0) < p["min_bid_ratio"]:
+        return "bid"
+    return None
+
+
+def _replay(exits, use_v53):
+    eq = {k: 2_000_000.0 for k in old_keys}
+    day = {}
+    n = {"taken": 0, "cost_abs": 0, "cost_mult": 0, "chase": 0, "trend": 0,
+         "surge": 0, "bid": 0, "cap": 0, "dayloss": 0, "retired": 0}
+    for e in exits:
+        k = e["strategy"]
+        if use_v53 and k in E.RETIRED_V53:
+            n["retired"] += 1
+            continue
+        p = E.STRATEGIES.get(k, {}).get("params", {})
+        if use_v53:
+            b = _blocked(e, p)
+            if b:
+                n[b] += 1
+                continue
+            d = e["exit_time"][:10]
+            day.setdefault((k, d), 0)
+            if p.get("max_trades_per_day") and day[(k, d)] >= p["max_trades_per_day"]:
+                n["cap"] += 1
+                continue
+            day[(k, d)] += 1
+        eq[k] *= (1 + e["pnl"] / e["notional"])
+        n["taken"] += 1
+    return sum(eq[k] for k in old_keys), n
+
+
+base_total, base_n = _replay(EXITS, False)
+v53_total, v53_n = _replay(EXITS, True)
+base_pct = (base_total / 20_000_000 - 1) * 100
+v53_pct = (v53_total / 20_000_000 - 1) * 100
+check("v5.2 원본 리플레이 = -5.78%", round(base_pct, 2) == -5.78, f"{base_pct:.2f}%")
+check("v5.3 게이트가 손실을 줄인다", v53_pct > base_pct,
+      f"{base_pct:.2f}% → {v53_pct:.2f}%")
+check("v5.3 게이트가 손실을 절반 이하로 줄인다", v53_pct > base_pct / 2,
+      f"{base_pct:.2f}% → {v53_pct:.2f}%")
+check("v5.3 거래 수 감소 (빈도 자체가 손실이었다)", v53_n["taken"] < base_n["taken"] * 0.7,
+      f"{base_n['taken']} → {v53_n['taken']}")
+check("게이트 사유 집계", v53_n["cost_abs"] > 0 and v53_n["retired"] == 20, str(v53_n))
+print(f"    리플레이: v5.2 {base_pct:+.2f}% ({base_n['taken']}건) → "
+      f"v5.3 {v53_pct:+.2f}% ({v53_n['taken']}건) {v53_n}")
+
 
 # ------------------------------------------------------------- [16] Gist 압축
 print("[16] Gist 업로드 gzip 압축 (Render 대역폭 절감)")

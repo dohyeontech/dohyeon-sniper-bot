@@ -93,6 +93,31 @@ v5.2 정비 (2026-11-17, 라이브 v5.1 밤사이 190전 51승 139패 -133만 �
   · **무손실 승계**: `migrate_from_v5`가 v5.1의 10계좌 잔고·전적·포지션·매매내역·쿨다운을 그대로
     이어받고 v4_archive · v5_fix 이력도 보존한다. 규칙이 바뀐 계좌만 `rules_effective_from`을
     승계 시각으로 옮겨 1일 예산을 새로 센다.
+
+v5.3 손질 (2026-11-21, Render 정지 기간 / v5.2 라이브 1,284전 -33.23% 진단)
+  · **진단**: v5.2 규칙이 돌던 11-17 06:49~11-20 21:39 구간에 670전이 더해지며 통합자산이
+    15,975,214 → 13,354,229원(-16.4%, 3.5일)으로 줄었다. 계좌별 최근 20청산(10계좌 200건)을
+    분해하면 승률 41.5% · 건당 -0.30%였고, 손절 61건이 -1,255,359원으로 손실 전체를 만들었다.
+    매수·매도 관측가에서 호가 1틱을 걷어낸 뒤의 건당 가격손익은 -0.07% — **신호에 비용을 넘길
+    만큼의 우위가 없고, 손실은 거래 횟수에 비례해 쌓이는 구조**였다.
+  · **손절 슬리피지 계통 오차**: 설계 손절 -1.0~-1.4%인데 실현 평균은 -1.24~-1.59%로 모든 계좌가
+    0.16~0.29%p 더 나빴다(틱 감시 청산 + 관측가 체결). 설계 손익비(목표/손절) 1.15가 실현 0.85로
+    뒤집혀 승률 55%에서도 기대값이 음수가 된다. v5.3은 진입을 줄여 이 오차를 덜 밟는 쪽을 택한다.
+  · **비용 상한 신설(`max_cost_pct`)**: 왕복 실비용 0.25% 초과 종목은 진입 금지. 로그에서 상한을
+    조이면 건당 손익이 단조 개선됐다(0.32%→-0.280%, 0.28%→-0.247%, 0.25%→-0.224%).
+    `panic_bounce`는 v5.2까지 비용 게이트가 아예 없어 0.32~0.53% 종목에서 손실의 62%를 냈다.
+  · **추격 상한**: 3분 변동 +1.5%(급등 추격) / +2.0%(눌림·돌파) 초과 종목은 진입 금지.
+  · **1일 리스크 예산(`max_daily_loss_pct`)**: 계좌가 그날 시작 자산 대비 -2.0%에 닿으면 당일
+    신규 진입 중단. 1일 거래 상한이 없던 `10m`에도 상한(10회)을 신설하고 전 계좌 6~10회로 정렬.
+  · **전략 교체**: `alt_rs`(-21.33%, 40전, 건당 -0.600%, 최근 20청산 손절 10건 -281,911원)를
+    v5.2 아카이브로 퇴출하고, 그 계좌(잔고·전적)를 **`confirmed_surge`**(15초 1,500만↑ · 5.0배 ·
+    BID 85%↑ · 3분 +0.3~1.5% · 목표 +1.5%/손절 -1.0%)가 이어받는다. 로그에서 이 조건 조합은
+    22건 건당 -0.019%(승률 55%)로 코호트 평균(-0.298%)보다 15배 나았다.
+  · **재설계**: `panic_bounce`는 -4.0% 이상 투매(약세장 -5.0%)만, `30m`은 3분 흐름 ≥ 0일 때만
+    (로그 20건 전부 3분 하락 중 진입 = 떨어지는 칼날), `tape_sweep`은 단일 매수 체결 800만↑ ·
+    6배↑ · 목표 +1.2%/손절 -0.8%/6분으로 조인다.
+  · **무손실 승계**: 9계좌 잔고·전적·포지션·매매내역 그대로, 퇴출 1계좌는 `v5_2_archive`에 성적표
+    보존, 신규 1계좌는 퇴출 계좌의 잔고·전적을 이어받는다(총자산 13,354,229원 불변).
 """
 
 import json
@@ -111,7 +136,7 @@ from market_filter import (  # noqa: E402
     is_excluded_market, STABLE_BASES, EXCLUDED_MARKETS, NOTE as MARKET_FILTER_NOTE,
 )
 
-VERSION = "5.2"
+VERSION = "5.3"
 FEE_RATE = 0.0005           # 업비트 수수료 0.05%
 TICK_INTERVAL_SEC = 1.5     # 엔진 판단 주기
 DEFAULT_SEED = 2_000_000    # 전략별 모의 시드
@@ -119,12 +144,15 @@ KST = timezone(timedelta(hours=9))
 SPREAD_TICKS = 0.5          # 편도 0.5틱 = 왕복 호가 1틱 (매수 +0.5틱, 매도 -0.5틱)
 
 LEGACY_KEYS = ("3m", "10m", "30m")
-KEPT_KEYS = ("3m", "10m", "panic_bounce")                  # 잔고 승계 계좌 (v5.2에서 밴드·문턱 조정)
-REBUILT_KEYS = ("30m", "pullback_reentry", "vwap_breakout", "bb_squeeze")
-NEW_KEYS = ("box_breakout", "alt_rs", "tape_sweep")
-RETIRED_KEYS = ("rsi_oversold", "major_momentum", "streak_ignition")
+KEPT_KEYS = ("3m", "10m")                       # 밴드·개념 유지 (v5.3은 추격 상한·거래 상한·비용만 조임)
+REBUILT_KEYS = ("30m", "panic_bounce", "pullback_reentry", "vwap_breakout", "bb_squeeze",
+                "tape_sweep")                    # 잔고 승계 + 규칙 손질
+NEW_KEYS = ("box_breakout", "confirmed_surge")
+RETIRED_KEYS = ("rsi_oversold", "major_momentum", "streak_ignition")      # v4.0 퇴출
+RETIRED_V53 = ("alt_rs",)                                                # v5.3 퇴출
+NEW_V53 = ("confirmed_surge",)                  # v5.3 신규 (퇴출 계좌의 잔고·전적을 승계)
 STRATEGY_KEYS = ("3m", "10m", "30m", "panic_bounce", "pullback_reentry", "vwap_breakout",
-                 "bb_squeeze") + NEW_KEYS
+                 "bb_squeeze", "box_breakout", "confirmed_surge", "tape_sweep")
 
 # v4.0에서 퇴출한 전략의 진단 (아카이브에 함께 보존)
 RETIRED_DIAGNOSIS = {
@@ -144,6 +172,39 @@ RETIRED_DIAGNOSIS = {
         "BTC·XRP 같은 대형주에서 10분간 ±0.1% 횡보를 사들이며 왕복 수수료만 누적했다"
         "(대형주 12/20건, 평균 +0.08%). 목표 +1.8%/-1.2%에 10분 상한이라 대형주에서는 도달 불가. "
         "→ 신호가 아니라 거래 빈도 자체가 비용이 된 사례."),
+}
+
+# v5.3에서 퇴출한 전략의 진단 (v5_2_archive에 보존)
+RETIRED_V53_DIAGNOSIS = {
+    "alt_rs": (
+        "40전 12승 28패(승률 30.0%) -21.33%, 건당 -0.600%로 리그 최악. 최근 20청산 중 손절 10건이 "
+        "-281,911원(그 구간 손실의 138%)이었고, 손절 실현 평균 -1.59%는 설계(-1.3%)보다 0.29%p "
+        "나빴다(리그 최대 슬리피지). 3분 상대강도 +1.3%p는 이미 오른 뒤라 진입가가 고점에 붙고, "
+        "디커플링이 꺾일 때 손절이 밀린다. 로그에서 이 조건 조합의 기대값이 어느 구간에서도 "
+        "플러스가 아니었다. → 계좌는 v5.2 아카이브에 보존하고, 잔고·전적은 confirmed_surge가 승계."),
+}
+
+# v5.2 계좌별 최근 20청산(200건) 진단 — v5.3 손질 근거 (v5_2_archive에 함께 보존)
+V53_DIAGNOSIS = {
+    "3m": ("최근 20청산 11승 9패 · 건당 -0.03% (사실상 본전). 3분 변동 +1.0% 이상(이미 오른) 진입의 "
+           "손실이 컸고, 12분 시간초과 11건이 -36,349원. 손절 실현 -1.47%는 설계(-1.3%)보다 0.17%p 나쁨."),
+    "10m": ("최근 20청산 13승 7패 · 건당 +0.16%로 리그 유일의 플러스 계좌. 다만 1일 거래 상한이 없어 "
+            "전체 275전(리그 최다)으로 수수료를 가장 많이 냈다 — 규칙은 살리고 상한만 신설."),
+    "30m": ("최근 20청산 3승 17패 · 건당 -0.27%, PF 0.05. 진입 20건 전부 3분 변동이 마이너스(-0.38~0.00%) "
+            "— 하락 중 눌림을 사는 '떨어지는 칼날'이었다. 손절 5건 -52,670원, 시간초과 15건 -36,056원."),
+    "panic_bounce": ("최근 20청산 9승 11패 · 건당 -0.46%, 누적 -1,307,712원(계좌 -65%). 설계 손절 -1.25%가 "
+                     "실현 -1.48%로 밀려 손익비 0.46. 비용 게이트가 없어 왕복비용 0.32~0.53% 종목에서 "
+                     "손실의 62%를 냈다. BTC 하락장 단독 가동 시 얕은 반등을 사는 구조."),
+    "pullback_reentry": ("최근 20청산 11승 9패 · 건당 -0.29%. 손절 6건이 -152,356원으로 이익(8건 +54,986원)의 "
+                         "3배. 실현 손절 -1.58% > 설계 -1.4%."),
+    "vwap_breakout": ("최근 20청산 13승 7패 · 건당 -0.06% (거의 본전). 목표 4건 +74,294원 vs 손절 7건 "
+                      "-152,456원 — 이익은 잘 챙기는데 손절이 크다."),
+    "bb_squeeze": ("최근 20청산 4승 16패 · 건당 -0.52%, PF 0.24. 손절 6건 -151,441원, 시간초과 11건 -57,292원. "
+                   "3분 변동 +11.5%까지 오른 뒤 진입한 건도 있었다(뒷북)."),
+    "box_breakout": ("최근 20청산 7승 13패 · 건당 -0.36%. 12분 시간초과 16건 -95,952원 — 박스 돌파 후 "
+                     "확장이 안 오고 제자리로 돌아오는 경우가 대부분이었다."),
+    "tape_sweep": ("최근 20청산 5승 15패 · 건당 -0.57%, PF 0.28. 손절 10건 -211,435원(최다). 설계 손절 -1.0%가 "
+                   "실현 -1.24%로 밀렸고, 8분 안에 목표 +1.8%에 닿기 어려웠다."),
 }
 
 # 컨셉이 유효해 재설계로 살린 전략의 진단 (대시보드·보고서 근거)
@@ -222,161 +283,184 @@ def fill_sell(price, spread_ticks=SPREAD_TICKS):
 
 # ---------------------------------------------------------------- 전략 정의
 STRATEGIES = {
-    # ---- 규칙 불변 승계 (v4.0 리그 상위 3계좌 = 대조군) ----
+    # ---- 개념·밴드 유지 (추격 상한·거래 상한·비용 상한만 조임) ----
     "3m": {
         "key": "3m", "label": "300만↑", "name": "300만↑ 급등 추격",
         "style": "공격형 · 초민감 스캘핑", "kind": "surge", "legacy": True, "btc_filter": True,
         "role": "kept",
-        "entry": "15초 거래대금 800만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 78%↑ · 3분변동 +0.3~+3.0%",
-        "exit": "목표 +1.5% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.3% · 최대 12분 · 쿨다운 5분 · 1일 10회",
+        "entry": "15초 거래대금 800만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 78%↑ · 3분변동 +0.3~+1.5% · 왕복비용 0.25%↓",
+        "exit": "목표 +1.5% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.3% · 최대 12분 · 쿨다운 5분 · 1일 8회 · 일손실 -2%",
         "params": {"min_short_krw": 8_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.78,
-                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 1.5,
+                   "min_chg_pct": 0.3, "max_chg_pct": 1.5, "target_pct": 1.5,
                    "trail_activation_pct": 0.9, "trail_drop_pct": 0.30, "stop_pct": -1.3,
                    "max_hold_min": 12, "cooldown_min": 5,
-                   "cost_mult": 5, "max_trades_per_day": 10},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 8, "max_daily_loss_pct": 2.0},
     },
     "10m": {
         "key": "10m", "label": "1,000만↑", "name": "1,000만↑ 급등 추격",
         "style": "균형형 · 중형 슈팅", "kind": "surge", "legacy": True, "btc_filter": True,
         "role": "kept",
-        "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+3.0%",
-        "exit": "목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.35% · 최대 12분 · 쿨다운 5분",
+        "entry": "15초 거래대금 1,000만↑ · 직전 3분 평균 대비 4.0배 · 매수(BID) 70%↑ · 3분변동 +0.3~+1.5% · 왕복비용 0.25%↓",
+        "exit": "목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.35% · 최대 12분 · 쿨다운 5분 · 1일 10회 · 일손실 -2%",
         "params": {"min_short_krw": 10_000_000, "min_surge_ratio": 4.0, "min_bid_ratio": 0.70,
-                   "min_chg_pct": 0.3, "max_chg_pct": 3.0, "target_pct": 1.6,
+                   "min_chg_pct": 0.3, "max_chg_pct": 1.5, "target_pct": 1.6,
                    "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.35,
                    "max_hold_min": 12, "cooldown_min": 5,
-                   "cost_mult": 5},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 10, "max_daily_loss_pct": 2.0},
     },
-    # ---- 조건 재설계 4전략 (잔고·전적 승계) ----
+    # ---- 조건 재설계 (잔고·전적 승계, 규칙만 손질) ----
     "30m": {
         "key": "30m", "label": "3,000만↑", "name": "대형주 10분 레인지 역추세",
         "style": "역추세 · 대형주 레인지", "kind": "range_rev", "legacy": True, "btc_filter": True,
         "role": "rebuilt",
-        "entry": ("24h 거래대금 TOP10 대형주 · 10분 고점 대비 -0.35~-1.2% 눌림에서 "
-                  "15초 BID 62%↑ + 15초 반등 0.05%↑"),
+        "entry": ("24h 거래대금 TOP10 대형주 · 3분 흐름 ≥ 0(하락 중 눌림 금지) · 10분 고점 대비 "
+                  "-0.35~-1.2% 눌림에서 15초 BID 62%↑ + 15초 반등 0.05%↑"),
         "exit": ("목표 +0.75% · 트레일링 +0.50%→고점 -0.20% · 손절 -0.50% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 10분"),
+                 "쿨다운 5분 · 동일종목 10분 · 1일 8회 · 일손실 -2%"),
         "params": {"top_n": 10, "dd_min_pct": -1.2, "dd_max_pct": -0.35, "min_bid_ratio": 0.62,
                    "min_rebound_pct": 0.05, "min_coverage_10m_sec": 540,
+                   "trend_guard_chg_3m_pct": 0.0,
                    "target_pct": 0.75, "trail_activation_pct": 0.50, "trail_drop_pct": 0.20,
                    "stop_pct": -0.50, "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 10, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 14},
+                   "cost_mult": 5, "max_trades_per_day": 8, "max_daily_loss_pct": 2.0},
+    },
+    "panic_bounce": {
+        "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
+        "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
+        "role": "rebuilt",
+        "entry": ("3분 -4.0% 이상 투매(BTC 약세장 -5.0%) · 최근 15초 매수(BID) 72%↑(약세장 75%↑) & "
+                  "직전 15초 대비 가격 반등 · 왕복비용 0.25%↓"),
+        "exit": ("목표 +1.6% · 트레일링 +1.0%→고점 -0.30% · 손절 -1.05% · 최대 10분 · 쿨다운 5분 · "
+                 "동일종목 30분 · 1일 6회 · 일손실 -2%"),
+        "params": {"min_drop_pct": -4.0, "bear_min_drop_pct": -5.0,
+                   "min_bid_ratio": 0.72, "bear_min_bid_ratio": 0.75, "target_pct": 1.6,
+                   "trail_activation_pct": 1.0, "trail_drop_pct": 0.30, "stop_pct": -1.05,
+                   "max_hold_min": 10, "cooldown_min": 5,
+                   "symbol_cooldown_min": 30, "symbol_cooldown_scope": "all",
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 6, "max_daily_loss_pct": 2.0},
     },
     "pullback_reentry": {
         "key": "pullback_reentry", "label": "눌림 재진입", "name": "눌림목 재진입",
         "style": "추세추종 · 눌림 매수", "kind": "pullback", "legacy": False, "btc_filter": True,
         "role": "rebuilt",
-        "entry": ("3분 +0.5%↑ 상승 후 10분 고점 대비 -0.8~-2.0% 눌림 · 10분 레인지 1.0%↑ · "
-                  "15초 BID 62%↑ + 상승 전환"),
+        "entry": ("3분 +0.5~+2.0% 상승 후 10분 고점 대비 -0.8~-2.0% 눌림 · 10분 레인지 1.0%↑ · "
+                  "15초 BID 62%↑ + 상승 전환 · 왕복비용 0.25%↓"),
         "exit": ("목표 +1.7% · 트레일링 +1.0%→고점 -0.35% · 손절 -1.4% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 20분"),
+                 "쿨다운 5분 · 동일종목 20분 · 1일 8회 · 일손실 -2%"),
         "params": {"dd_min_pct": -2.0, "dd_max_pct": -0.8, "min_bid_ratio": 0.62,
-                   "min_chg_3m_pct": 0.5, "min_coverage_10m_sec": 300,
+                   "min_chg_3m_pct": 0.5, "max_chg_3m_pct": 2.0, "min_coverage_10m_sec": 300,
                    "min_range_10m_pct": 1.0, "target_pct": 1.7,
                    "trail_activation_pct": 1.0, "trail_drop_pct": 0.35, "stop_pct": -1.4,
                    "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 12},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 8, "max_daily_loss_pct": 2.0},
     },
     "vwap_breakout": {
         "key": "vwap_breakout", "label": "VWAP 돌파", "name": "실시간 VWAP 돌파",
         "style": "추세추종 · 평균가 돌파", "kind": "vwap", "legacy": False, "btc_filter": True,
         "role": "rebuilt",
         "entry": ("3분 VWAP 하단에서 15초 거래대금 3.0배↑ + BID 62%↑ 동반, VWAP +0.35%↑ 돌파 · "
-                  "10분 레인지 1.0%↑"),
+                  "10분 레인지 1.0%↑ · 3분 변동 +2.0% 이하 · 왕복비용 0.25%↓"),
         "exit": ("목표 +1.5% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.25% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 20분"),
+                 "쿨다운 5분 · 동일종목 20분 · 1일 8회 · 일손실 -2%"),
         "params": {"min_vol_ratio": 3.0, "min_bid_ratio": 0.62, "breakout_pct": 0.35,
-                   "min_coverage_sec": 120, "min_range_10m_pct": 1.0,
+                   "min_coverage_sec": 120, "min_range_10m_pct": 1.0, "max_chg_3m_pct": 2.0,
                    "target_pct": 1.5, "trail_activation_pct": 0.9, "trail_drop_pct": 0.30,
                    "stop_pct": -1.25, "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 12},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 8, "max_daily_loss_pct": 2.0},
     },
     "bb_squeeze": {
         "key": "bb_squeeze", "label": "BB 스퀴즈", "name": "1분봉 볼린저 스퀴즈 돌파",
         "style": "변동성 확장 · 밴드 돌파", "kind": "bb", "legacy": False, "btc_filter": True,
         "role": "rebuilt",
         "entry": ("1분봉 볼린저(20,2) 수축(40봉 밴드폭 하위 20%) + 종가 > 중심선 + "
-                  "상단 밴드 거래량 2.0배↑ 돌파 · 10분 레인지 0.9%↑"),
+                  "상단 밴드 거래량 2.0배↑ 돌파 · 10분 레인지 0.9%↑ · 3분 변동 +2.0% 이하 · 왕복비용 0.25%↓"),
         "exit": ("목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.3% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 20분"),
+                 "쿨다운 5분 · 동일종목 20분 · 1일 6회 · 일손실 -2%"),
         "params": {"bb_period": 20, "bb_k": 2.0, "squeeze_rank": 0.20, "min_vol_ratio": 2.0,
                    "max_candle_age_sec": 120, "require_above_mid": True,
-                   "min_range_10m_pct": 0.9, "target_pct": 1.6,
+                   "min_range_10m_pct": 0.9, "max_chg_3m_pct": 2.0, "target_pct": 1.6,
                    "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.3,
                    "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 12},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 6, "max_daily_loss_pct": 2.0},
     },
-    "panic_bounce": {
-        "key": "panic_bounce", "label": "투매 반등", "name": "투매 과매도 반등",
-        "style": "역추세 · 급락 되돌림", "kind": "panic_bounce", "legacy": False, "btc_filter": False,
-        "role": "kept",
-        "entry": "3분 내 -2.5% 이상 급락 후 최근 15초 매수(BID) 비율 65%↑ & 직전 15초 대비 가격 반등",
-        "exit": "목표 +1.8% · 트레일링 +1.2%→고점 -0.35% · 손절 -1.25% · 최대 15분 · 쿨다운 5분 · 동일종목 15분",
-        "params": {"min_drop_pct": -2.5, "min_bid_ratio": 0.65, "target_pct": 1.8,
-                   "trail_activation_pct": 1.2, "trail_drop_pct": 0.35, "stop_pct": -1.25,
-                   "max_hold_min": 15, "cooldown_min": 5,
-                   "symbol_cooldown_min": 15, "symbol_cooldown_scope": "stop"},
-    },
-    # ---- 신규 3전략 ----
+    # ---- v5.0 신규 (기개편) ----
     "box_breakout": {
         "key": "box_breakout", "label": "박스 돌파", "name": "10분 박스권 돌파",
         "style": "추세추종 · 수축 후 확장", "kind": "box", "legacy": False, "btc_filter": True,
         "role": "new",
         "entry": ("10분 박스 폭 1.1% 이하로 수축한 뒤 직전 15초 제외 박스 고점 +0.15% 돌파 · "
-                  "15초 거래대금 3.0배↑ · BID 65%↑"),
+                  "15초 거래대금 3.0배↑ · BID 65%↑ · 3분 변동 +2.0% 이하 · 왕복비용 0.25%↓"),
         "exit": ("목표 +1.4% · 트레일링 +0.9%→고점 -0.30% · 손절 -1.2% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 20분"),
+                 "쿨다운 5분 · 동일종목 20분 · 1일 6회 · 일손실 -2%"),
         "params": {"box_max_range_pct": 1.1, "breakout_pct": 0.15, "min_surge_ratio": 3.0,
                    "min_bid_ratio": 0.65, "min_short_krw": 5_000_000,
                    "min_coverage_10m_sec": 540, "min_range_10m_pct": 0.3,
-                   "max_chg_15s_pct": 1.2, "target_pct": 1.4,
+                   "max_chg_15s_pct": 1.2, "max_chg_3m_pct": 2.0, "target_pct": 1.4,
                    "trail_activation_pct": 0.9, "trail_drop_pct": 0.30, "stop_pct": -1.2,
                    "max_hold_min": 12, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 10},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 6, "max_daily_loss_pct": 2.0},
     },
-    "alt_rs": {
-        "key": "alt_rs", "label": "알트 상대강도", "name": "알트-BTC 디커플링 강세",
-        "style": "로테이션 · 상대강도", "kind": "alt_rs", "legacy": False, "btc_filter": True,
+    # ---- v5.3 신규 (alt_rs 계좌 승계) ----
+    "confirmed_surge": {
+        "key": "confirmed_surge", "label": "확인 급등", "name": "확인형 급등 추격",
+        "style": "공격형 · 강한 확인 스캘핑", "kind": "surge", "legacy": False, "btc_filter": True,
         "role": "new",
-        "entry": ("3분 수익률이 BTC 3분 수익률보다 +1.3%p 이상 앞서고(디커플링) 15초 거래대금 "
-                  "700만↑ · BID 75%↑ · 10분 레인지 0.8%↑"),
-        "exit": ("목표 +1.6% · 트레일링 +0.95%→고점 -0.32% · 손절 -1.3% · 최대 12분 · "
-                 "쿨다운 5분 · 동일종목 20분 · 1일 6회"),
-        "params": {"min_rs_pct": 1.3, "min_chg_3m_pct": 0.5, "min_surge_ratio": 2.5,
-                   "min_bid_ratio": 0.75, "min_short_krw": 7_000_000,
-                   "min_coverage_sec": 150, "min_range_10m_pct": 0.8,
-                   "exclude_btc": True, "target_pct": 1.6,
-                   "trail_activation_pct": 0.95, "trail_drop_pct": 0.32, "stop_pct": -1.3,
-                   "max_hold_min": 12, "cooldown_min": 5,
+        "entry": ("15초 거래대금 1,500만↑ · 직전 3분 평균 대비 5.0배↑ · 매수(BID) 85%↑ · "
+                  "3분변동 +0.3~+1.5% · 왕복비용 0.25%↓"),
+        "exit": ("목표 +1.5% · 트레일링 +0.8%→고점 -0.25% · 손절 -1.0% · 최대 10분 · "
+                 "쿨다운 5분 · 동일종목 20분 · 1일 6회 · 일손실 -2%"),
+        "params": {"min_short_krw": 15_000_000, "min_surge_ratio": 5.0, "min_bid_ratio": 0.85,
+                   "min_chg_pct": 0.3, "max_chg_pct": 1.5, "target_pct": 1.5,
+                   "trail_activation_pct": 0.8, "trail_drop_pct": 0.25, "stop_pct": -1.0,
+                   "max_hold_min": 10, "cooldown_min": 5,
                    "symbol_cooldown_min": 20, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 6},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 6, "max_daily_loss_pct": 2.0},
     },
     "tape_sweep": {
         "key": "tape_sweep", "label": "체결 스파이크", "name": "대형 매수 체결 스파이크",
         "style": "체결불균형 · 초단타", "kind": "tape", "legacy": False, "btc_filter": True,
-        "role": "new",
-        "entry": ("10초 내 단일 매수 체결 300만↑ & 3분 평균 체결 금액의 4배↑(대형 매수 스윕) + "
-                  "15초 가격 +0.12%↑ · BID 60%↑"),
-        "exit": ("목표 +1.8% · 트레일링 +1.1%→고점 -0.3% · 손절 -1.0% · 최대 8분 · "
-                 "쿨다운 3분 · 동일종목 15분"),
-        "params": {"min_print_krw": 3_000_000, "min_print_mult": 4.0, "min_ticks_10s": 5,
-                   "min_chg_15s_pct": 0.12, "min_bid_10s": 0.60,
-                   "min_range_10m_pct": 0.6, "target_pct": 1.8,
-                   "trail_activation_pct": 1.1, "trail_drop_pct": 0.3, "stop_pct": -1.0,
-                   "max_hold_min": 8, "cooldown_min": 3,
+        "role": "rebuilt",
+        "entry": ("10초 내 단일 매수 체결 800만↑ & 3분 평균 체결 금액의 6배↑(대형 매수 스윕) + "
+                  "15초 가격 +0.20%↑ · 10초 매수 75%↑ · 왕복비용 0.25%↓"),
+        "exit": ("목표 +1.2% · 트레일링 +0.7%→고점 -0.25% · 손절 -0.8% · 최대 6분 · "
+                 "쿨다운 3분 · 동일종목 15분 · 1일 6회 · 일손실 -2%"),
+        "params": {"min_print_krw": 8_000_000, "min_print_mult": 6.0, "min_ticks_10s": 5,
+                   "min_chg_15s_pct": 0.20, "min_bid_10s": 0.75,
+                   "min_range_10m_pct": 0.6, "target_pct": 1.2,
+                   "trail_activation_pct": 0.7, "trail_drop_pct": 0.25, "stop_pct": -0.8,
+                   "max_hold_min": 6, "cooldown_min": 3,
                    "symbol_cooldown_min": 15, "symbol_cooldown_scope": "all",
-                   "cost_mult": 5, "max_trades_per_day": 14},
+                   "cost_mult": 5, "max_cost_pct": 0.25,
+                   "max_trades_per_day": 6, "max_daily_loss_pct": 2.0},
     },
 }
 
 
 # BTC 하락 추세에서도 신규 진입을 허용하는 역추세 예외 전략 (나머지는 btc_filter: True)
 BTC_FILTER_EXEMPT = tuple(k for k in STRATEGY_KEYS if not STRATEGIES[k].get("btc_filter", True))
+
+
+def _retired_block():
+    """퇴출 전략과 진단 (v4.0 퇴출 3 + v5.3 퇴출 1)."""
+    out = {}
+    for k in RETIRED_KEYS:
+        out[k] = {"key": k, "diagnosis": RETIRED_DIAGNOSIS.get(k, ""), "retired_in": "v4.0"}
+    for k in RETIRED_V53:
+        out[k] = {"key": k, "diagnosis": RETIRED_V53_DIAGNOSIS.get(k, ""), "retired_in": VERSION}
+    return out
 
 
 def _rules_block():
@@ -400,16 +484,27 @@ def _rules_block():
         "cost_gates": {
             "volatility_gate": ("10분 레인지(%)가 전략별 하한 미만인 종목은 진입 금지 "
                                 "(대형주는 목표 도달이 불가능하므로 자동 제외)"),
-            "cost_mult": ("목표 익절폭이 왕복 실비용(수수료 0.10% + 호가 1틱)의 cost_mult배(기본 5배) "
-                          "미만이면 진입 금지 — 수수료·호가 벽 방지 (v5.2부터 3m·10m 포함 8전략 적용)"),
-            "daily_cap": "전략별 1일 거래(청산) 상한으로 수수료 예산을 강제",
+            "cost_mult": ("목표 익절폭이 왕복 실비용(수수료 0.10% + 호가 1틱)의 cost_mult배(5배) "
+                          "미만이면 진입 금지 — 수수료·호가 벽 방지 (v5.3은 전 10계좌 적용)"),
+            "max_cost_pct": ("왕복 실비용 0.25% 초과 종목은 진입 금지 (v5.3 신설). "
+                             "비용은 확정, 우위는 불확실하다 — 로그에서 상한을 조이면 건당 손익이 "
+                             "단조 개선됐다(0.32%→-0.280%, 0.25%→-0.224%)"),
+            "chase_cap": ("3분 변동이 상한(급등 추격 +1.5%, 눌림·돌파 +2.0%)을 넘은 '이미 오른' "
+                          "자리는 진입 금지 (v5.3)"),
+            "trend_guard": "30m은 3분 흐름이 0% 이상일 때만 눌림 매수 (v5.3 — 하락 중 칼날 금지)",
+            "daily_cap": "전략별 1일 거래(청산) 상한 6~10회로 수수료 예산을 강제 (10m도 v5.3에서 신설)",
+            "daily_loss": ("계좌가 그날 시작 자산 대비 -2.0%에 닿으면 당일 신규 진입 중단 "
+                           "(v5.3 신설 · 1일 리스크 예산)"),
             "hold_cap": ("보유 시간 상한만으로 시간 청산: 모멘텀·돌파 6전략(3m·10m·pullback·vwap·bb·box)과 "
-                         "alt_rs는 12분, 30m는 12분, panic_bounce 15분, tape_sweep 8분 — "
+                         "30m는 12분, confirmed_surge 10분, panic_bounce 10분, tape_sweep 6분 — "
                          "중간에 인위적으로 끊는 정체 청산(STAGNATION)은 v5.2에서 철폐"),
         },
         "btc_filter": {"enabled": True, "sma_window": "15분봉 20이평", "threshold_pct": -0.2,
                        "note": ("BTC가 20이평 대비 -0.2% 초과 하회하면 모멘텀·돌파 9전략 신규 진입 "
-                                "차단(보유 유지). 역추세 1전략(투매 과매도 반등)만 예외"),
+                                "차단(보유 유지). 역추세 1전략(투매 과매도 반등)만 예외 — 단 v5.3부터 "
+                                "약세장에서는 -5.0% 투매 · BID 75%로 조건을 강화한다"),
+                       "bear_tightening": {"strategy": "panic_bounce",
+                                           "min_drop_pct": -5.0, "min_bid_ratio": 0.75},
                        "exempt_strategies": list(BTC_FILTER_EXEMPT)},
         "market_filter": {"stablecoin_excluded": True,
                           "excluded_markets": sorted(EXCLUDED_MARKETS),
@@ -418,7 +513,7 @@ def _rules_block():
         "candle_cache": {"top_n": 15, "refresh_sec": 60, "sleep_sec": 0.25,
                          "note": ("볼린저 전략용 1분봉은 별도 저속 스레드가 거래대금 상위 15종목만 "
                                   "순환 수집 (v5.0은 RSI 전략 퇴출로 캔들 의존 전략 1개)")},
-        "gist_sync_interval_sec": 60,
+        "gist_sync_interval_sec": 300,
         "strategies": {
             k: {"key": k, "label": STRATEGIES[k]["label"], "name": STRATEGIES[k]["name"],
                 "style": STRATEGIES[k]["style"], "entry": STRATEGIES[k]["entry"],
@@ -428,7 +523,7 @@ def _rules_block():
                 "carried_over": STRATEGIES[k]["legacy"]}
             for k in STRATEGY_KEYS
         },
-        "retired": {k: {"key": k, "diagnosis": RETIRED_DIAGNOSIS.get(k, "")} for k in RETIRED_KEYS},
+        "retired": _retired_block(),
     }
 
 
@@ -521,6 +616,8 @@ def new_strategy(key, seed=DEFAULT_SEED, now_str=None):
         "losses": 0,
         "recent_trades": [],
         "status": "WAITING_FOR_SIGNAL",
+        "day_start_date": None,
+        "day_start_equity": float(seed),
         "last_event": f"{meta['name']} 계좌 초기화 — 신호 대기",
         "watch": None,
         "current_equity": float(seed),
@@ -779,21 +876,91 @@ def migrate_from_v4(old):
     return state
 
 
-def migrate_from_v5(old):
-    """v5.x → v5.2(정체 청산 철폐 + 목표 현실화) **무손실 승계**.
+def _state_equity(d):
+    """포지션이 있으면 마지막 관측가로 평가한 계좌 자산 (마이그레이션용)."""
+    pos = d.get("position") or {}
+    cash = float(d.get("cash_krw") or 0.0)
+    if pos:
+        px = float(pos.get("last_price") or pos.get("entry_price") or 0.0)
+        return cash + float(pos.get("coin_qty") or 0.0) * px
+    return cash
 
-    · 10계좌의 잔고·전적·포지션·쿨다운·매매내역을 그대로 이어받는다(리셋 없음).
-    · 규칙 파라미터·설명만 코드 정의(v5.2)로 교체한다. 파라미터가 실제로 바뀐 계좌는
-      `rules_effective_from`을 승계 시각으로 옮겨 1일 거래 예산을 새 규칙부터 다시 센다
-      (이전 규칙의 거래가 새 규칙의 하루 예산을 미리 태우지 않게 하는 기존 정책과 같다).
-    · v4_archive(퇴출 계좌 성적표)·v4→v5 승계 이력·v5_fix(v5.0→v5.1 기록)는 보존하고,
-      이번 승계 내역은 `v5_2_fix`에 남긴다.
+
+def migrate_from_v5(old):
+    """v5.x → v5.3(하위 전략 손질) **무손실 승계**.
+
+    · 9계좌의 잔고·전적·포지션·쿨다운·매매내역을 그대로 이어받는다(리셋 없음).
+    · `alt_rs`는 퇴출 → `v5_2_archive`에 최종 성적표·진단을 남기고, 그 계좌의 잔고·전적은
+      `confirmed_surge`가 이어받는다(총자산 불변, 통합 수익률 기준도 그대로).
+    · 규칙 파라미터·설명만 코드 정의(v5.3)로 교체한다. 파라미터가 실제로 바뀐 계좌는
+      `rules_effective_from`을 승계 시각으로 옮겨 1일 거래·손실 예산을 새 규칙부터 다시 센다.
+    · v4_archive · v5_fix · v5_2_fix 이력은 보존하고, 이번 승계 내역은 `v5_3_fix`에 남긴다.
     """
     state = new_league_state()
     old = old or {}
     old_strats = old.get("strategies") or {}
     now = fmt(kst_now())
-    carried, changed = [], []
+    carried, changed, archived = [], [], []
+
+    # ---- 1. 퇴출 계좌 → v5.2 아카이브 (성적표·진단 보존) ----
+    retired_src = {}
+    for key in RETIRED_V53:
+        src = old_strats.get(key)
+        if isinstance(src, dict):
+            retired_src[key] = src
+            archived.append(key)
+    rows = []
+    for key in old.get("strategy_order") or list(old_strats.keys()):
+        src = old_strats.get(key)
+        if not isinstance(src, dict):
+            continue
+        if key in RETIRED_V53:
+            rows.append(_v4_strategy_row(src, key, "retired", RETIRED_V53_DIAGNOSIS.get(key, "")))
+        elif key in KEPT_KEYS:
+            rows.append(_v4_strategy_row(
+                src, key, "kept",
+                "개념·밴드는 유지하고 추격 상한(3분 +1.5%)·비용 상한(0.25%)·1일 상한(8~10회)만 조였다."))
+        elif key in NEW_KEYS:
+            rows.append(_v4_strategy_row(
+                src, key, "new", V53_DIAGNOSIS.get(key, "")))
+        else:
+            rows.append(_v4_strategy_row(src, key, "rebuilt", V53_DIAGNOSIS.get(key, "")))
+    retired_rows = [r for r in rows if r["decision"] == "retired"]
+    if rows:
+        state["v5_2_archive"] = {
+            "version": old.get("version"),
+            "period": {"from": old.get("initialized_at"), "to": now},
+            "archived_at": now,
+            "league": {
+                "initial_capital": old.get("initial_capital"),
+                "final_equity": old.get("current_equity"),
+                "ret_pct": old.get("current_ret_pct"),
+                "trades": old.get("total_trades"),
+                "wins": old.get("wins"),
+                "losses": old.get("losses"),
+                "realized_pnl": old.get("total_realized_pnl"),
+                "max_drawdown_pct": old.get("max_drawdown_pct"),
+            },
+            "retired_totals": {
+                "count": len(retired_rows),
+                "initial_capital": sum(r["initial_capital"] for r in retired_rows),
+                "final_equity": sum(r["final_equity"] for r in retired_rows),
+                "trades": sum(r["trades"] for r in retired_rows),
+                "realized_pnl": sum(r["realized_pnl"] for r in retired_rows),
+                "ret_pct": (round((sum(r["final_equity"] for r in retired_rows)
+                                   - sum(r["initial_capital"] for r in retired_rows))
+                                  / sum(r["initial_capital"] for r in retired_rows) * 100, 2)
+                            if retired_rows else 0.0),
+            },
+            "note": ("v5.2 리그의 최종 성적표. `alt_rs`는 퇴출되어 그 손익은 이후 집계에서 빠지고, "
+                     "잔고·전적은 `confirmed_surge` 계좌가 이어받는다(총자산 불변). "
+                     "나머지 9계좌는 규칙만 손질되어 계속 기록된다."),
+            "fill_model": {"fee_round_trip_pct": round(2 * FEE_RATE * 100, 3),
+                           "spread": "왕복 호가 1틱 (매수 +0.5틱 / 매도 -0.5틱)"},
+            "strategies": rows,
+        }
+
+    # ---- 2. 승계 계좌 (잔고·전적 그대로, 규칙만 교체) ----
     for key in STRATEGY_KEYS:
         src = old_strats.get(key)
         dst = state["strategies"][key]
@@ -814,12 +981,53 @@ def migrate_from_v5(old):
         dst["carried_from_version"] = src.get("carried_from_version") or old.get("version")
         dst["rules_changed"] = key in changed
         dst["rules_changed_in"] = VERSION if key in changed else src.get("rules_changed_in")
+        dst["day_start_date"] = None                      # v5.3 1일 손실 예산 기준은 첫 틱에 기록
+        dst["day_start_equity"] = round(_state_equity(src), 2)
         if dst.get("position"):
             dst["status"] = "IN_POSITION"
+        for trade in dst.get("recent_trades") or []:
+            if isinstance(trade, dict):
+                trade.setdefault("strategy", key)
+                trade.setdefault("strategy_label", dst["label"])
+                trade.setdefault("strategy_name", dst["name"])
         carried.append(key)
+
+    # ---- 3. 신규 계좌: 퇴출 계좌의 잔고·전적을 이어받는다 (총자산 불변) ----
+    inherited = []
+    inherited_src = []
+    for key, src in zip(NEW_V53, [retired_src[k] for k in RETIRED_V53 if k in retired_src]):
+        dst = state["strategies"][key]
+        for field in CARRY_FIELDS:
+            if field in src and src[field] is not None:
+                dst[field] = src[field]
+        if src.get("initial_capital"):
+            dst["initial_capital"] = float(src["initial_capital"])
+        dst["rules_effective_from"] = now
+        dst["carried_over"] = True
+        dst["carried_from_version"] = old.get("version")
+        dst["carried_from_strategy"] = RETIRED_V53[0] if RETIRED_V53 else None
+        dst["rules_changed"] = True
+        dst["rules_changed_in"] = VERSION
+        dst["day_start_date"] = None
+        dst["day_start_equity"] = round(_state_equity(src), 2)
+        for trade in dst.get("recent_trades") or []:
+            if isinstance(trade, dict):
+                trade.setdefault("strategy", key)
+                trade.setdefault("strategy_label", dst["label"])
+                trade.setdefault("strategy_name", dst["name"])
+        if dst.get("position"):                           # 승계 계좌 규칙이 다르므로 시장가 정리
+            dst["position"]["force_exit_reason"] = f"v{VERSION} 규칙 교체 — 이전 규칙 포지션 정리(시가)"
+        else:
+            dst["status"] = "WAITING_FOR_SIGNAL"
+            dst["last_event"] = (f"♻️ 퇴출 계좌({dst.get('carried_from_strategy')})의 잔고·전적 승계 — "
+                                 f"{dst['name']} 규칙으로 시작")
+        inherited.append(key)
+        inherited_src.append(src)
 
     state["v4_archive"] = old.get("v4_archive")
     state["migrated_from"] = old.get("migrated_from")
+    state["v5_fix"] = old.get("v5_fix")
+    state["v5_2_fix"] = old.get("v5_2_fix")
     state["initialized_at"] = old.get("initialized_at") or state["initialized_at"]
     if old.get("peak_equity") is not None:
         state["peak_equity"] = old["peak_equity"]
@@ -830,30 +1038,36 @@ def migrate_from_v5(old):
         row = old_strats.get(key) or {}
         return float(row.get("current_equity") or row.get("cash_krw") or 0)
 
-    state["v5_fix"] = old.get("v5_fix")
-    state["v5_2_fix"] = {
+    state["v5_3_fix"] = {
         "from_version": old.get("version"),
         "to_version": VERSION,
         "at": now,
         "carried_keys": carried,
+        "inherited_keys": inherited,
+        "retired_keys": archived,
         "rules_changed_keys": changed,
         "carried_trades": sum(int((old_strats.get(k) or {}).get("total_trades") or 0)
-                              for k in carried),
-        "carried_equity": round(sum(_equity_of(k) for k in carried)),
-        "carried_positions": [k for k in carried if (old_strats.get(k) or {}).get("position")],
+                              for k in carried + inherited),
+        "carried_equity": round(sum(_equity_of(k) for k in carried)
+                                + sum(_state_equity(s) for s in inherited_src)),
+        "carried_positions": [k for k in carried + inherited
+                              if (state["strategies"][k].get("position") or {}).get("market")],
         "changes": [
-            "STAGNATION(6분 무풍 정체 청산) 로직·파라미터 철폐 — 손절/목표/트레일링/시간초과로만 청산",
-            "3m 15초 거래대금 800만↑ · BID 78%↑ · 1일 10회 · 목표 +1.5%/트레일 +0.9%→-0.30%/손절 -1.3%",
-            "10m 목표 +1.6%/트레일 +0.95%→-0.32%/손절 -1.35%",
-            "pullback +1.7%/-1.4% · vwap +1.5%/-1.25% · bb +1.6%/-1.3% · box +1.4%/-1.2%",
-            "alt_rs 디커플링 +1.3%p · 15초 700만↑ · BID 75%↑ · 1일 6회 · 목표 +1.6%",
-            "panic_bounce 목표 +1.8% · 트레일 +1.2%→-0.35% · 손절 -1.25%",
-            "30m · tape_sweep 규칙 유지 (1일 거래 예산 시계도 유지)",
+            "비용 상한(max_cost_pct 0.25%) 전 계좌 신설 — panic_bounce는 비용 게이트가 없었다",
+            "추격 상한: 급등 3분 +1.5% / 눌림·돌파 +2.0% 초과 진입 금지",
+            "1일 리스크 예산(max_daily_loss_pct 2.0%) 신설 — 당일 손실 한도 도달 시 신규 진입 중단",
+            "1일 거래 상한: 10m 신설(10회), 3m 8회, 30m 8회, panic 6회, pullback·vwap 8회, bb·box·tape·confirmed 6회",
+            "alt_rs 퇴출 → v5_2_archive, 계좌(잔고·전적)는 confirmed_surge가 승계",
+            "confirmed_surge 신설: 15초 1,500만↑ · 5.0배 · BID 85%↑ · 3분 +0.3~1.5% · 목표 +1.5%/손절 -1.0%",
+            "panic_bounce 재설계: -4.0% 투매(약세장 -5.0% · BID 75%) · 손절 -1.05% · 10분 · 동일종목 30분",
+            "30m 추세 가드: 3분 흐름 ≥ 0일 때만 눌림 매수 (로그 20건 전부 하락 중 진입이었다)",
+            "tape_sweep 재설계: 단일 매수 체결 800만↑ · 6배↑ · BID 75% · 목표 +1.2%/손절 -0.8%/6분",
         ],
-        "note": ("잔고·전적·포지션·매매내역 무손실 승계. 파라미터가 바뀐 계좌만 1일 거래 예산 시계를 리셋"),
+        "note": ("잔고·전적·포지션 무손실 승계. 규칙이 바뀐 계좌만 1일 예산 시계를 리셋하고, "
+                 "퇴출 계좌의 잔고는 신규 계좌가 이어받아 총자산과 통합 수익률 기준을 유지한다."),
     }
-    print(f"[Engine] Migrated v{old.get('version')} -> v{VERSION}: carried {len(carried)} accounts, "
-          f"rules changed {changed}")
+    print(f"[Engine] Migrated v{old.get('version')} -> v{VERSION}: carried {len(carried)} accounts "
+          f"(+{inherited} from {archived}), rules changed {changed}")
     return state
 
 
@@ -894,6 +1108,7 @@ def ensure_league_state():
             state["strategies"][k].setdefault("symbol_cooldowns", {})
         state["strategy_order"] = list(STRATEGY_KEYS)
         state.setdefault("v4_archive", None)
+        state.setdefault("v5_2_archive", None)
         # 규칙 적용 시점: 이미 마이그레이션된 상태에는 승계 시각을 한 번만 채운다
         migrated_at = ((state.get("migrated_from") or {}).get("at")) or fmt(kst_now())
         for k in STRATEGY_KEYS:
@@ -986,6 +1201,23 @@ def _trades_today(st, now=None, window=40):
             continue
         out += 1
     return out
+
+
+def _roll_day_equity(st, stream, now):
+    """v5.3: 계좌의 '그날 시작 자산'을 하루 한 번 기록한다 (1일 손실 한도의 기준)."""
+    day = fmt(now)[:10]
+    if st.get("day_start_date") != day:
+        st["day_start_date"] = day
+        st["day_start_equity"] = round(_strategy_equity(st, stream), 2)
+    return float(st.get("day_start_equity") or 0.0)
+
+
+def _daily_loss_pct(st):
+    """그날 시작 자산 대비 현재 자산 변화율(%). 포지션이 없을 때는 현금이 곧 자산이다."""
+    base = float(st.get("day_start_equity") or 0.0)
+    if base <= 0:
+        return 0.0
+    return (float(st.get("cash_krw") or 0.0) - base) / base * 100.0
 
 
 def _prune_symbol_cooldowns(st, now):
@@ -1139,14 +1371,29 @@ def _sig_surge(snap, st, ctx):
 
 
 def _sig_panic_bounce(snap, st, ctx):
-    """3분 -2.5% 급락 후 매수 우위 + 가격 반등."""
+    """3분 -4.0% 이상 투매 후 매수 우위 + 가격 반등.
+
+    v5.3: 이 계좌는 BTC 필터 예외(약세장 단독 가동)라, BTC가 20이평을 -0.2% 넘게 하회하는
+    장에서는 '더 깊은 투매 + 더 강한 매수 우위'만 인정한다(-5.0% · BID 75%). 약세장에 얕은
+    반등을 사다가 계좌가 -65%까지 간 것이 v5.2까지의 실제 결과다.
+    """
     p = st["params"]
     if snap["coverage_sec"] < 60:
         return False, f"관측 {snap['coverage_sec']:.0f}s < 60s", 0.0
-    if snap["chg_3m_pct"] > p["min_drop_pct"]:
-        return False, f"3분변동 {snap['chg_3m_pct']:+.2f}% > {p['min_drop_pct']}% (급락 아님)", -snap["chg_3m_pct"]
-    if snap["bid_ratio"] < p["min_bid_ratio"]:
-        return False, f"매수비율 {snap['bid_ratio']*100:.0f}% < {p['min_bid_ratio']*100:.0f}%", 0.0
+    bear = bool(ctx.get("bearish"))
+    min_drop = p.get("bear_min_drop_pct") if (bear and p.get("bear_min_drop_pct") is not None) \
+        else p["min_drop_pct"]
+    min_bid = p.get("bear_min_bid_ratio") if (bear and p.get("bear_min_bid_ratio") is not None) \
+        else p["min_bid_ratio"]
+    ok, why = _market_gates(snap, st)      # v5.3: 이 계좌에 없던 비용 게이트를 붙인다
+    if not ok:
+        return False, why, 0.0
+    if snap["chg_3m_pct"] > float(min_drop):
+        tail = " · BTC 약세장 기준" if bear else ""
+        return False, (f"3분변동 {snap['chg_3m_pct']:+.2f}% > {float(min_drop)}% "
+                       f"(급락 아님{tail})"), -snap["chg_3m_pct"]
+    if snap["bid_ratio"] < float(min_bid):
+        return False, (f"매수비율 {snap['bid_ratio']*100:.0f}% < {float(min_bid)*100:.0f}%"), 0.0
     if snap["price_15s_ago"] is None or snap["last_price"] <= snap["price_15s_ago"]:
         return False, "직전 15초 대비 반등 미확인", 0.0
     reb = (snap["last_price"] - snap["price_15s_ago"]) / snap["price_15s_ago"] * 100.0
@@ -1155,11 +1402,13 @@ def _sig_panic_bounce(snap, st, ctx):
 
 
 def _market_gates(snap, st):
-    """v5.0 공통 진입 게이트 — 변동성 하한 · 유동성 · 왕복비용 대비 목표폭.
+    """공통 진입 게이트 — 변동성 · 유동성 · 비용 · 추격 · 추세.
 
     지역시장(대형주)에 알트용 밴드를 씌우던 v4.0의 실패를 막는 장치다.
     · 10분 레인지가 하한 미만 → 그 종목은 보유 시간 안에 목표까지 못 간다 (대형주 자동 제외)
     · 목표폭 < 왕복 실비용 × cost_mult → 맞아도 수수료·호가에 먹힌다
+    · v5.3: 왕복 실비용 0.25% 초과 금지(비용은 확정) · 3분 변동 상한(뒷북 추격 금지)
+      · 3분 흐름 하한(하락 중 눌림 매수 금지, 30m)
     """
     p = st.get("params") or {}
     mr = p.get("min_range_10m_pct")
@@ -1175,6 +1424,27 @@ def _market_gates(snap, st):
         ticks = int(snap.get("ticks_10m") or 0)
         if ticks < int(mt):
             return False, f"10분 체결 {ticks}건 < {mt}건 (호가 얇음)"
+    # v5.3: 왕복 실비용 절대 상한 — 비용은 확정, 우위는 불확실하다
+    mcp = p.get("max_cost_pct")
+    if mcp and snap.get("last_price"):
+        c_abs = cost_pct(snap.get("last_price"))
+        if c_abs > float(mcp):
+            return False, (f"왕복 실비용 {c_abs:.2f}% > {float(mcp):.2f}% "
+                           f"(수수료·호가 벽 — 손익비 불성립)")
+    # v5.3: 추격 상한 — 3분 변동이 상한을 넘은 '이미 오른' 자리는 사지 않는다
+    mc3 = p.get("max_chg_3m_pct")
+    if mc3 is not None:
+        chg3 = snap.get("chg_3m_pct")
+        if chg3 is not None and chg3 > float(mc3):
+            return False, (f"3분변동 {chg3:+.2f}% > +{float(mc3):.2f}% (뒷북 추격 금지)")
+    # v5.3: 추세 가드 — 하락 중 눌림 매수(떨어지는 칼날) 금지 (30m)
+    tg = p.get("trend_guard_chg_3m_pct")
+    if tg is not None:
+        chg3 = snap.get("chg_3m_pct")
+        if chg3 is None or chg3 < float(tg):
+            shown = "없음" if chg3 is None else f"{chg3:+.2f}%"
+            return False, (f"3분 흐름 {shown} < +{float(tg):.2f}% "
+                           f"(하락 중 눌림 매수 금지)")
     cm = p.get("cost_mult")
     if cm:
         c = cost_pct(snap.get("last_price"))
@@ -1658,6 +1928,10 @@ def run_sniper_tick(stream=None):
     events = []
     exited_now = set()
 
+    # ---------- 0. 하루 시작 자산 기록 (1일 손실 한도 기준) ----------
+    for key in STRATEGY_KEYS:
+        _roll_day_equity(state["strategies"][key], stream, now)
+
     # ---------- 1. 전략별 보유 포지션 청산 감시 ----------
     for key in STRATEGY_KEYS:
         st = state["strategies"][key]
@@ -1758,6 +2032,16 @@ def run_sniper_tick(stream=None):
             st["last_event"] = (f"🧾 1일 거래 상한 {int(cap)}회 도달 — 수수료 예산 소진, "
                                 f"신규 진입 중단 (내일 리셋)")
             continue
+
+        # v5.3: 1일 손실 한도 — 그날 시작 자산 대비 -max_daily_loss_pct%면 당일 신규 진입 중단
+        dl = st["params"].get("max_daily_loss_pct")
+        if dl:
+            day_pct = _daily_loss_pct(st)
+            if day_pct <= -float(dl):
+                st["status"] = "DAILY_LOSS_STOP"
+                st["last_event"] = (f"🛑 1일 손실 한도 {float(dl):.1f}% 도달 ({day_pct:+.2f}%) — "
+                                    f"당일 신규 진입 중단 (내일 리셋)")
+                continue
 
         best_ok, best_any = _evaluate_strategy(key, snaps, ctx)
         if best_ok:
